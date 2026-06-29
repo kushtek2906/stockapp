@@ -1,5 +1,5 @@
 import type { InventoryStore } from "../types";
-import { loadStore, saveStore } from "./storage";
+import { loadStore, normalizeStore, saveStore } from "./storage";
 import {
   APP_STATE_ID,
   APP_STATE_TABLE,
@@ -28,7 +28,7 @@ export async function loadInventory(): Promise<InventoryStore> {
     if (error) throw error;
 
     if (data?.data != null) {
-      const store = data.data as InventoryStore;
+      const store = normalizeStore(data.data as Partial<InventoryStore>);
       saveStore(store); // refresh offline cache
       return store;
     }

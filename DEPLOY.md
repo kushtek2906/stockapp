@@ -1,7 +1,7 @@
 # Deploying DECANTVERSE StockApp (free)
 
 This guide takes you from the local app to a live URL you can open on any device, with
-your inventory stored in the cloud behind a shared passcode.
+your inventory stored in the cloud behind a per-user login.
 
 There are three one-time pieces: **Supabase** (the database + login), **GitHub** (stores
 the code), and **Vercel** (hosts the live site). All free.
@@ -15,8 +15,9 @@ the code), and **Vercel** (hosts the live site). All free.
   **Supabase** Postgres database, so it survives cache-clears and is the same on every device.
 - The browser also keeps a **local cache**, so the app still opens (read-only-ish) if you're
   offline; it re-syncs when back online.
-- Access is gated by a **shared passcode** — really a single shared Supabase login. The data
-  is locked at the database level (Row Level Security), so the passcode actually protects it.
+- Access is gated by a **login** — each person has their own Supabase email + password, and
+  everyone signed in shares the same inventory. The data is locked at the database level (Row
+  Level Security), so only signed-in users can read or change it.
 - The Google price sheets stay exactly as they are (read-only); nothing about them changes.
 
 > If you skip Supabase entirely (no env vars), the app still runs in **local mode** —
@@ -55,9 +56,10 @@ the code), and **Vercel** (hosts the live site). All free.
    ```
 
 3. Left sidebar → **Authentication** → **Users** → **Add user** → **Create new user**.
-   Use a **real email you control** (so you can recover access later), set a password directly
-   here, and tick "Auto Confirm User". **This password is your app passcode.** (Avoid a fake email
-   — if you forget the password you can't get a recovery mail. See "Locked out?" below.)
+   Use a **real email you control** (so you can recover access later), set a password, and tick
+   "Auto Confirm User". This is your own login — **each person who uses the app gets their own
+   email + password the same way** (see "Add more users" below); everyone signed in has full
+   access. (Avoid a fake email — no recovery mail if you forget the password. See "Locked out?".)
 4. Get the URL and the browser key (two different pages in Settings):
    - **Project URL** → Settings → **Data API**. It looks like `https://<your-ref>.supabase.co`.
      This is `VITE_SUPABASE_URL`.
@@ -76,11 +78,13 @@ Create a file named `.env` in the project root (copy `.env.example`) and fill in
 ```
 VITE_SUPABASE_URL=https://<your-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=sb_publishable_...your publishable key...
-VITE_LOGIN_EMAIL=the-real-email-you-used@example.com
+VITE_LOGIN_EMAIL=the-real-email-you-used@example.com   # optional — just pre-fills the email box
 ```
 
-Run `npm run dev`, open the app, and you'll get the passcode screen. Enter the password from
-Step 3. Your existing local data is pushed up to Supabase on first load.
+`VITE_LOGIN_EMAIL` is optional now (only two vars are required): the login screen asks for an
+email + password, so anyone with a Supabase account signs in with their own. Run `npm run dev`,
+open the app, sign in with the user from Step 3. Your existing local data is pushed up to Supabase
+on first load.
 
 ---
 
@@ -108,24 +112,35 @@ Step 3. Your existing local data is pushed up to Supabase on first load.
 1. Go to <https://vercel.com>, sign up with your GitHub account (free).
 2. **Add New… → Project**, and import your `stockapp` repo.
 3. Vercel auto-detects **Vite** (build `npm run build`, output `dist`). Leave those as-is.
-4. Expand **Environment Variables** and add the same three as in `.env`:
+4. Expand **Environment Variables** and add (the first two are required;
+   `VITE_LOGIN_EMAIL` is optional and only pre-fills the email box):
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
-   - `VITE_LOGIN_EMAIL`
+   - `VITE_LOGIN_EMAIL` *(optional)*
 5. Click **Deploy**. After ~1 minute you get a URL like `https://stockapp-xxxx.vercel.app`.
-6. Open that URL on your phone and laptop, enter the passcode, and you'll see the same data on
-   both. Every `git push` to `main` automatically redeploys.
+   (If you add/change env vars later, **Redeploy** — Vite only reads them at build time.)
+6. Open that URL on your phone and laptop, sign in with your email + password, and you'll see the
+   same data on both. Every `git push` to `main` automatically redeploys.
 
 ---
 
 ## Day-to-day
 
 - Edit code → `git push` → Vercel redeploys in ~1 min.
-- Change the passcode: Supabase → Authentication → Users → your user → ⋮ menu → reset/update the
+- Change your password: Supabase → Authentication → Users → your user → ⋮ menu → reset/update the
   password (or send a recovery mail if you used a real email).
-- Add another person: just share the passcode (or add another user and share those creds).
-- Forgot to set env vars? The app falls back to local-only mode and shows no passcode screen —
+- Sign out / switch user: use **Sign out** at the bottom of the sidebar.
+- Forgot to set env vars? The app falls back to local-only mode and shows no login screen —
   add the vars in Vercel and redeploy to enable cloud sync.
+
+### Add more users (each with their own login)
+You don't share your password — give each person their own account:
+1. Supabase → **Authentication** → **Users** → **Add user** → **Create new user**.
+2. Enter their email + a password, tick **Auto Confirm User**, save.
+3. Send them the Vercel link + their email/password. They sign in and have full access
+   (everyone shares the same inventory data). The sidebar shows who's signed in.
+4. To remove someone: Authentication → Users → ⋮ → **Delete user** (their data isn't affected —
+   it lives in `app_state`, shared by everyone).
 
 ### Locked out? (forgot the passcode)
 Your inventory lives in the `app_state` table, **not** tied to the login user — so resetting the

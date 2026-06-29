@@ -8,9 +8,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { RecordSaleInput } from "../hooks/useInventory";
+import type { ConfirmOrderInput, ConfirmOrderResult } from "../hooks/useInventory";
 import {
   clearItemMatch,
+  displayName,
   formatBill,
   matchOrder,
   parseOrder,
@@ -38,7 +39,7 @@ import { Label } from "../components/ui/Label";
 interface OrderPageProps {
   catalog: DecantCatalog | null;
   perfumes: Perfume[];
-  onRecord: (input: RecordSaleInput) => boolean;
+  onConfirmOrder: (input: ConfirmOrderInput) => ConfirmOrderResult;
   syncing: boolean;
   lastSynced: string | null;
   onRefresh: () => void;
@@ -289,7 +290,7 @@ function OrderItemRow({
 export function OrderPage({
   catalog,
   perfumes,
-  onRecord,
+  onConfirmOrder,
   syncing,
   lastSynced,
   onRefresh,
@@ -302,14 +303,16 @@ export function OrderPage({
   const [confirmed, setConfirmed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showBrand, setShowBrand] = useState(true);
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerAddress, setCustomerAddress] = useState("");
 
   const bill = useMemo(() => formatBill(items, showBrand), [items, showBrand]);
 
-  const deductable = useMemo(
-    () =>
-      items.filter(
-        (it) => it.unitPrice !== null && it.size !== null && it.inTrackedInventory,
-      ).length,
+  // Billable = has a resolved size + price (tracked or not). These go on the order;
+  // only the tracked ones also deduct stock.
+  const billable = useMemo(
+    () => items.filter((it) => it.unitPrice !== null && it.size !== null).length,
     [items],
   );
 
@@ -359,38 +362,29 @@ export function OrderPage({
   };
 
   const handleConfirm = () => {
-    if (confirmed || items.length === 0) return;
-    let applied = 0;
-    let skippedNoInv = 0;
-    let failed = 0;
-    for (const item of items) {
-      if (item.unitPrice === null || item.size === null) continue;
-      if (item.linkedPerfumeId === null) {
-        skippedNoInv += 1;
-        continue;
-      }
-      const ok = onRecord({
-        perfumeId: item.linkedPerfumeId,
-        mlSold: item.size,
-        totalPrice: item.unitPrice,
-      });
-      if (ok) applied += 1;
-      else failed += 1;
-    }
+    if (confirmed || billable === 0) return;
+    const orderItems = items
+      .filter((it) => it.unitPrice !== null && it.size !== null)
+      .map((it) => ({
+        perfumeId: it.linkedPerfumeId,
+        perfumeName: displayName(it),
+        brand: it.chosen?.brand ?? "",
+        size: it.size,
+        mlSold: it.size as number,
+        unitPrice: it.unitPrice as number,
+      }));
+
+    onConfirmOrder({
+      customerName,
+      customerAddress,
+      customerPhone,
+      items: orderItems,
+    });
+
     setConfirmed(true);
-    toast.success(
-      `Order confirmed — ${applied} item${applied !== 1 ? "s" : ""} deducted from stock.`,
-    );
-    if (skippedNoInv > 0) {
-      toast.info(
-        `${skippedNoInv} item${skippedNoInv !== 1 ? "s" : ""} billed but not in tracked inventory.`,
-      );
-    }
-    if (failed > 0) {
-      toast.warning(
-        `${failed} item${failed !== 1 ? "s" : ""} could not be deducted (insufficient stock).`,
-      );
-    }
+    setCustomerName("");
+    setCustomerPhone("");
+    setCustomerAddress("");
   };
 
   return (
@@ -496,6 +490,39 @@ export function OrderPage({
                 <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-stone-50 px-3 py-3 font-mono text-sm text-stone-800">
                   {bill}
                 </pre>
+
+                <div className="space-y-2 rounded-lg border border-stone-100 bg-stone-50 p-3">
+                  <p className="text-xs font-medium text-stone-500">
+                    Customer details{" "}
+                    <span className="font-normal text-stone-400">
+                      (optional — you can add these later from Order History)
+                    </span>
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Name"
+                      className="h-9 text-sm"
+                      aria-label="Customer name"
+                    />
+                    <Input
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="Phone"
+                      className="h-9 text-sm"
+                      aria-label="Customer phone"
+                    />
+                  </div>
+                  <Input
+                    value={customerAddress}
+                    onChange={(e) => setCustomerAddress(e.target.value)}
+                    placeholder="Address"
+                    className="h-9 text-sm"
+                    aria-label="Customer address"
+                  />
+                </div>
+
                 <div className="flex gap-2">
                   <Button
                     type="button"
@@ -509,22 +536,22 @@ export function OrderPage({
                   <Button
                     type="button"
                     onClick={handleConfirm}
-                    disabled={confirmed || deductable === 0}
+                    disabled={confirmed || billable === 0}
                     className="flex-1"
                   >
                     {confirmed ? (
                       <>
                         <Check className="size-4" aria-hidden />
-                        Stock Updated
+                        Order Saved
                       </>
                     ) : (
-                      `Confirm & Update Stock (${deductable})`
+                      `Confirm & Save Order (${billable})`
                     )}
                   </Button>
                 </div>
                 {confirmed && (
                   <p className="text-xs text-emerald-600">
-                    Inventory updated. Generate a new bill to start another order.
+                    Order saved to history & stock updated. Generate a new bill to start another.
                   </p>
                 )}
               </CardContent>

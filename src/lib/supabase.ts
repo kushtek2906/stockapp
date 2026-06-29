@@ -18,11 +18,11 @@ const clean = (v: string | undefined): string =>
 const url = clean(import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, "");
 const anonKey = clean(import.meta.env.VITE_SUPABASE_ANON_KEY);
 
-/** Fixed account email — the UI only asks for the password ("passcode"). */
-export const LOGIN_EMAIL = clean(import.meta.env.VITE_LOGIN_EMAIL);
+/** Optional: pre-fills the email box on the login screen (e.g. the owner's email).
+ * Not required — each person signs in with their own email + password. */
+export const DEFAULT_LOGIN_EMAIL = clean(import.meta.env.VITE_LOGIN_EMAIL);
 
-export const isSupabaseConfigured =
-  url.length > 0 && anonKey.length > 0 && LOGIN_EMAIL.length > 0;
+export const isSupabaseConfigured = url.length > 0 && anonKey.length > 0;
 
 export const supabase: SupabaseClient | null = isSupabaseConfigured
   ? createClient(url, anonKey)

@@ -1,9 +1,9 @@
-import { isSupabaseConfigured, LOGIN_EMAIL, supabase } from "./supabase";
+import { isSupabaseConfigured, supabase } from "./supabase";
 
 /**
- * "Shared passcode" auth: everyone signs in to ONE shared Supabase account. The
- * email is fixed (env), so the UI only asks for the password (the passcode). The
- * session is persisted by the Supabase client, so users don't re-enter it each visit.
+ * Multi-user auth: each person signs in with their own Supabase email + password.
+ * Everyone who's signed in has full access (Row Level Security allows any
+ * authenticated user). Sessions persist in the browser, so users stay logged in.
  */
 
 /** Whether a login gate is needed at all (only in cloud mode). */
@@ -15,22 +15,26 @@ export async function hasSession(): Promise<boolean> {
   return data.session !== null;
 }
 
-export async function signInWithPasscode(
-  passcode: string,
+export async function getCurrentUserEmail(): Promise<string | null> {
+  if (!isSupabaseConfigured || supabase === null) return null;
+  const { data } = await supabase.auth.getUser();
+  return data.user?.email ?? null;
+}
+
+export async function signIn(
+  email: string,
+  password: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (!isSupabaseConfigured || supabase === null || LOGIN_EMAIL === "") {
-    return { ok: true };
-  }
+  if (!isSupabaseConfigured || supabase === null) return { ok: true };
   const { error } = await supabase.auth.signInWithPassword({
-    email: LOGIN_EMAIL,
-    password: passcode,
+    email: email.trim(),
+    password,
   });
   if (error) {
-    // Surface the real reason — "Email not confirmed", "Invalid login
-    // credentials", a key/URL problem, etc. — instead of always blaming the passcode.
+    // Surface the real reason ("Invalid login credentials", "Email not
+    // confirmed", a key/URL problem, …) instead of a generic message.
     console.error("Supabase sign-in failed:", error);
-    const detail = error.message || "Sign-in failed.";
-    return { ok: false, message: `Login failed: ${detail}` };
+    return { ok: false, message: `Login failed: ${error.message || "unknown error"}` };
   }
   return { ok: true };
 }

@@ -1,12 +1,16 @@
 import {
   ArrowLeftRight,
   ClipboardList,
+  History,
   LayoutDashboard,
+  LogOut,
   Package,
   ReceiptText,
   ShoppingCart,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import logo from "../../assets/logo.png";
+import { authRequired, getCurrentUserEmail, signOut } from "../../lib/auth";
 import { cn } from "../../lib/utils";
 import type { Page } from "../../types";
 
@@ -38,6 +42,11 @@ const NAV_ITEMS: NavItem[] = [
     icon: <ReceiptText className="size-4" aria-hidden />,
   },
   {
+    id: "history",
+    label: "Order History",
+    icon: <History className="size-4" aria-hidden />,
+  },
+  {
     id: "compare",
     label: "Compare",
     icon: <ArrowLeftRight className="size-4" aria-hidden />,
@@ -55,6 +64,17 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activePage, onNavigate }: SidebarProps) {
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (authRequired) void getCurrentUserEmail().then(setUserEmail);
+  }, []);
+
+  const handleSignOut = async () => {
+    await signOut();
+    window.location.reload();
+  };
+
   return (
     <aside className="flex h-screen w-56 flex-col border-r border-stone-200 bg-white px-3 py-5">
       <div className="mb-6 flex flex-col items-center px-2">
@@ -96,7 +116,22 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
         </ul>
       </nav>
 
-      <div className="mt-auto px-3">
+      <div className="mt-auto space-y-2 px-3">
+        {authRequired && userEmail !== null && (
+          <div className="border-t border-stone-100 pt-3">
+            <p className="truncate text-xs text-stone-500" title={userEmail}>
+              {userEmail}
+            </p>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="mt-1 flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-amber-700"
+            >
+              <LogOut className="size-3.5" aria-hidden />
+              Sign out
+            </button>
+          </div>
+        )}
         <p className="text-xs text-stone-400">DECANTVERSE © 2026</p>
       </div>
     </aside>

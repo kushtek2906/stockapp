@@ -8,6 +8,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { ComparisonPage } from "./pages/ComparisonPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { OrderPage } from "./pages/OrderPage";
+import { OrderHistoryPage } from "./pages/OrderHistoryPage";
 import { SalesPage } from "./pages/SalesPage";
 import type { Page } from "./types";
 
@@ -33,6 +34,10 @@ export default function App() {
     bulkImport,
     importCatalog,
     clearAllInventory,
+    orders,
+    confirmOrder,
+    deleteOrder,
+    editOrder,
   } = useInventory();
   const appPrefs = loadPrefs();
   const {
@@ -92,7 +97,7 @@ export default function App() {
         <OrderPage
           catalog={catalog}
           perfumes={perfumes}
-          onRecord={recordSale}
+          onConfirmOrder={confirmOrder}
           syncing={syncing}
           lastSynced={lastSynced}
           onRefresh={() => {
@@ -101,6 +106,15 @@ export default function App() {
           sheetId={sheetId}
           gid={gid}
           onSetSheetConfig={setSheetConfig}
+        />
+      )}
+      {activePage === "history" && (
+        <OrderHistoryPage
+          orders={orders}
+          perfumes={perfumes}
+          brands={brands}
+          onDelete={deleteOrder}
+          onEdit={editOrder}
         />
       )}
       {activePage === "compare" && <ComparisonPage myCatalog={catalog} />}

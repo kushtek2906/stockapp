@@ -10,7 +10,10 @@ import type {
   AuditEntry,
   AuditEntity,
   Brand,
+  DecantSize,
   InventoryStore,
+  Order,
+  OrderLineRecord,
   Perfume,
   Sale,
 } from "../types";
@@ -73,6 +76,35 @@ export interface RecordSaleInput {
   perfumeId: string;
   mlSold: number;
   totalPrice: number;
+}
+
+export interface OrderItemInput {
+  perfumeId: string | null;
+  perfumeName: string;
+  brand: string;
+  size: DecantSize | null;
+  mlSold: number;
+  unitPrice: number;
+}
+
+export interface ConfirmOrderInput {
+  customerName: string;
+  customerAddress: string;
+  customerPhone: string;
+  items: OrderItemInput[];
+}
+
+export interface ConfirmOrderResult {
+  applied: number;
+  failed: number;
+  skippedNoInv: number;
+}
+
+export interface EditOrderInput {
+  customerName: string;
+  customerAddress: string;
+  customerPhone: string;
+  items: OrderItemInput[];
 }
 
 export interface CatalogImportItem {
@@ -638,15 +670,205 @@ export function useInventory() {
       brands: [],
       perfumes: [],
       sales: [],
+      orders: [],
       auditLog: [...store.auditLog, entry],
     });
     toast.success("Inventory cleared — all brands, perfumes, and sales removed.");
   }, [store, persist]);
 
+  // ── Customer orders (history) ────────────────────────────────────────────────
+
+  const confirmOrder = useCallback(
+    (input: ConfirmOrderInput): ConfirmOrderResult => {
+      const sales = [...store.sales];
+      const auditLog = [...store.auditLog];
+      const remainingLocal: Record<string, number> = { ...remainingMlMap };
+
+      const items: OrderLineRecord[] = [];
+      let applied = 0;
+      let failed = 0;
+      let skippedNoInv = 0;
+
+      for (const it of input.items) {
+        let saleId: string | null = null;
+        if (it.perfumeId === null) {
+          skippedNoInv += 1;
+        } else {
+          const rem = remainingLocal[it.perfumeId] ?? 0;
+          if (it.mlSold > rem) {
+            failed += 1;
+          } else {
+            const sale: Sale = {
+              id: generateId("sale"),
+              perfumeId: it.perfumeId,
+              mlSold: it.mlSold,
+              date: today(),
+              totalPrice: it.unitPrice,
+            };
+            sales.push(sale);
+            remainingLocal[it.perfumeId] = rem - it.mlSold;
+            saleId = sale.id;
+            applied += 1;
+          }
+        }
+        items.push({
+          perfumeId: it.perfumeId,
+          perfumeName: it.perfumeName,
+          brand: it.brand,
+          size: it.size,
+          mlSold: it.mlSold,
+          unitPrice: it.unitPrice,
+          saleId,
+        });
+      }
+
+      const total = items.reduce((sum, i) => sum + i.unitPrice, 0);
+      const order: Order = {
+        id: generateId("order"),
+        date: new Date().toISOString(),
+        customerName: input.customerName.trim(),
+        customerAddress: input.customerAddress.trim(),
+        customerPhone: input.customerPhone.trim(),
+        items,
+        total,
+      };
+      const entry = makeAuditEntry(
+        "create",
+        "sale",
+        order.id,
+        `Order${order.customerName !== "" ? ` for ${order.customerName}` : ""}: ${applied} item(s) deducted, ₹${total} total`,
+      );
+      persist({
+        ...store,
+        sales,
+        orders: [...store.orders, order],
+        auditLog: [...auditLog, entry],
+      });
+
+      toast.success(
+        `Order saved — ${applied} item${applied !== 1 ? "s" : ""} deducted from stock.`,
+      );
+      if (skippedNoInv > 0) {
+        toast.info(
+          `${skippedNoInv} item${skippedNoInv !== 1 ? "s" : ""} billed but not in tracked inventory.`,
+        );
+      }
+      if (failed > 0) {
+        toast.warning(
+          `${failed} item${failed !== 1 ? "s" : ""} couldn't be deducted (insufficient stock).`,
+        );
+      }
+      return { applied, failed, skippedNoInv };
+    },
+    [store, persist, remainingMlMap],
+  );
+
+  const deleteOrder = useCallback(
+    (orderId: string): void => {
+      const order = store.orders.find((o) => o.id === orderId);
+      if (order === undefined) return;
+
+      const saleIds = new Set(
+        order.items.map((i) => i.saleId).filter((id): id is string => id !== null),
+      );
+      const entry = makeAuditEntry(
+        "delete",
+        "sale",
+        orderId,
+        `Deleted order${order.customerName !== "" ? ` for ${order.customerName}` : ""} — restored ${saleIds.size} sale(s), ₹${order.total}`,
+      );
+      persist({
+        ...store,
+        sales: store.sales.filter((s) => !saleIds.has(s.id)),
+        orders: store.orders.filter((o) => o.id !== orderId),
+        auditLog: [...store.auditLog, entry],
+      });
+      toast.success("Order deleted — stock restored.");
+    },
+    [store, persist],
+  );
+
+  const editOrder = useCallback(
+    (orderId: string, input: EditOrderInput): boolean => {
+      const order = store.orders.find((o) => o.id === orderId);
+      if (order === undefined) return false;
+
+      // Revert: drop this order's existing sales, then recompute remaining.
+      const oldSaleIds = new Set(
+        order.items.map((i) => i.saleId).filter((id): id is string => id !== null),
+      );
+      let sales = store.sales.filter((s) => !oldSaleIds.has(s.id));
+      const remaining: Record<string, number> = {};
+      for (const p of store.perfumes) {
+        remaining[p.perfumeId] = computeRemainingMl(p.totalMl, p.perfumeId, sales);
+      }
+
+      // Re-apply the edited/added lines as new sales, validating stock.
+      const items: OrderLineRecord[] = [];
+      for (const it of input.items) {
+        let saleId: string | null = null;
+        if (it.perfumeId !== null && it.mlSold > 0) {
+          const rem = remaining[it.perfumeId] ?? 0;
+          if (it.mlSold > rem) {
+            toast.error(
+              `Not enough stock for ${it.perfumeName} — only ${rem.toFixed(1)} ml left.`,
+            );
+            return false;
+          }
+          const sale: Sale = {
+            id: generateId("sale"),
+            perfumeId: it.perfumeId,
+            mlSold: it.mlSold,
+            date: today(),
+            totalPrice: it.unitPrice,
+          };
+          sales = [...sales, sale];
+          remaining[it.perfumeId] = rem - it.mlSold;
+          saleId = sale.id;
+        }
+        items.push({
+          perfumeId: it.perfumeId,
+          perfumeName: it.perfumeName,
+          brand: it.brand,
+          size: it.size,
+          mlSold: it.mlSold,
+          unitPrice: it.unitPrice,
+          saleId,
+        });
+      }
+
+      const total = items.reduce((sum, i) => sum + i.unitPrice, 0);
+      const updatedOrder: Order = {
+        ...order,
+        customerName: input.customerName.trim(),
+        customerAddress: input.customerAddress.trim(),
+        customerPhone: input.customerPhone.trim(),
+        items,
+        total,
+      };
+      const entry = makeAuditEntry(
+        "edit",
+        "sale",
+        orderId,
+        `Edited order${updatedOrder.customerName !== "" ? ` for ${updatedOrder.customerName}` : ""} — now ₹${total}`,
+      );
+      persist({
+        ...store,
+        sales,
+        orders: store.orders.map((o) => (o.id === orderId ? updatedOrder : o)),
+        auditLog: [...store.auditLog, entry],
+      });
+      toast.success("Order updated — stock adjusted.");
+      return true;
+    },
+    [store, persist],
+  );
+
   return {
     brands: store.brands,
     perfumes: store.perfumes,
     sales: store.sales,
+    orders: store.orders,
     auditLog: store.auditLog,
     remainingMlMap,
     totalStockValue,
@@ -663,5 +885,8 @@ export function useInventory() {
     bulkImport,
     importCatalog,
     clearAllInventory,
+    confirmOrder,
+    deleteOrder,
+    editOrder,
   };
 }

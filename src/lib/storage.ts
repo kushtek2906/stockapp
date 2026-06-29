@@ -83,8 +83,26 @@ const SEED_DATA: InventoryStore = {
       totalPrice: 1300,
     },
   ],
+  orders: [],
   auditLog: [],
 };
+
+/**
+ * Guarantee every array field exists. Older stores (saved before `orders` was
+ * added, or partial data) won't have every key — default them so the app doesn't
+ * crash on `store.orders.map(...)` etc.
+ */
+export function normalizeStore(
+  raw: Partial<InventoryStore> | null | undefined,
+): InventoryStore {
+  return {
+    brands: raw?.brands ?? [],
+    perfumes: raw?.perfumes ?? [],
+    sales: raw?.sales ?? [],
+    orders: raw?.orders ?? [],
+    auditLog: raw?.auditLog ?? [],
+  };
+}
 
 function getTodayMinus(days: number): string {
   const d = new Date();
@@ -154,6 +172,7 @@ function migrateV1(raw: string): InventoryStore {
     brands,
     perfumes,
     sales: v1.sales,
+    orders: [],
     auditLog: [],
   };
 }
@@ -162,7 +181,7 @@ export function loadStore(): InventoryStore {
   const rawV2 = localStorage.getItem(STORAGE_KEY_V2);
   if (rawV2 !== null) {
     try {
-      return JSON.parse(rawV2) as InventoryStore;
+      return normalizeStore(JSON.parse(rawV2) as Partial<InventoryStore>);
     } catch {
       // corrupted v2 data — fall through to seed
     }

@@ -43,6 +43,7 @@ export type Page =
   | "inventory"
   | "sales"
   | "order"
+  | "history"
   | "compare"
   | "audit";
 
@@ -69,9 +70,34 @@ export interface DecantCatalog {
   gid: string;
 }
 
+// ── Customer orders (history) ────────────────────────────────────────────────
+
+/** One line of a confirmed order. `saleId` links it to the Sale it deducted
+ * (null if the item wasn't in tracked inventory or stock was insufficient). */
+export interface OrderLineRecord {
+  perfumeId: string | null;
+  perfumeName: string;
+  brand: string;
+  size: DecantSize | null;
+  mlSold: number;
+  unitPrice: number;
+  saleId: string | null;
+}
+
+export interface Order {
+  id: string;
+  date: string; // ISO timestamp
+  customerName: string;
+  customerAddress: string;
+  customerPhone: string;
+  items: OrderLineRecord[];
+  total: number;
+}
+
 export interface InventoryStore {
   brands: Brand[];
   perfumes: Perfume[];
   sales: Sale[];
+  orders: Order[];
   auditLog: AuditEntry[];
 }
