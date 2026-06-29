@@ -84,6 +84,18 @@ export interface OrderLineRecord {
   saleId: string | null;
 }
 
+export type PaymentMode = "Prepaid" | "COD";
+
+/** A shipping box preset — fills length/height/width/weight in the pickup CSV. */
+export interface BoxType {
+  id: string;
+  name: string;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
+  weightG: number;
+}
+
 export interface Order {
   id: string;
   date: string; // ISO timestamp
@@ -92,6 +104,16 @@ export interface Order {
   customerPhone: string;
   items: OrderLineRecord[];
   total: number;
+  // ── Shipping / payment (all optional; fillable later from Order History) ──
+  seq?: number; // running order number, used in the shipment id
+  customerCity?: string;
+  customerPincode?: string;
+  customerEmail?: string;
+  customerAltPhone?: string;
+  weightG?: number | null; // optional per-order weight; falls back to the box's weight
+  boxId?: string | null; // which BoxType this ships in
+  paymentMode?: PaymentMode; // default "Prepaid"
+  amountOverride?: number | null; // overrides the line-item sum when set
 }
 
 export interface InventoryStore {

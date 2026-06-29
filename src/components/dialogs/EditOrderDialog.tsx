@@ -2,6 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { EditOrderInput, OrderItemInput } from "../../hooks/useInventory";
+import { loadPrefs } from "../../lib/prefs";
 import { DECANT_SIZES, type Brand, type DecantSize, type Order, type Perfume } from "../../types";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -40,8 +41,18 @@ export function EditOrderDialog({
   const [name, setName] = useState(order.customerName);
   const [phone, setPhone] = useState(order.customerPhone);
   const [address, setAddress] = useState(order.customerAddress);
+  const [city, setCity] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [email, setEmail] = useState("");
+  const [altPhone, setAltPhone] = useState("");
+  const [boxId, setBoxId] = useState("");
+  const [weightStr, setWeightStr] = useState("");
+  const [cod, setCod] = useState(false);
+  const [finalAmountStr, setFinalAmountStr] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
   const [addId, setAddId] = useState("");
+
+  const boxes = useMemo(() => loadPrefs().boxes, []);
 
   const brandMap = useMemo<Record<string, string>>(() => {
     const m: Record<string, string> = {};
@@ -54,6 +65,14 @@ export function EditOrderDialog({
       setName(order.customerName);
       setPhone(order.customerPhone);
       setAddress(order.customerAddress);
+      setCity(order.customerCity ?? "");
+      setPincode(order.customerPincode ?? "");
+      setEmail(order.customerEmail ?? "");
+      setAltPhone(order.customerAltPhone ?? "");
+      setBoxId(order.boxId ?? boxes[0]?.id ?? "");
+      setWeightStr(order.weightG != null ? String(order.weightG) : "");
+      setCod((order.paymentMode ?? "Prepaid") === "COD");
+      setFinalAmountStr(order.amountOverride != null ? String(order.amountOverride) : "");
       setLines(
         order.items.map((i) => ({
           perfumeId: i.perfumeId,
@@ -65,7 +84,7 @@ export function EditOrderDialog({
       );
       setAddId("");
     }
-  }, [open, order]);
+  }, [open, order, boxes]);
 
   const updateLine = (idx: number, patch: Partial<EditableLine>) => {
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
@@ -100,10 +119,22 @@ export function EditOrderDialog({
       mlSold: Number(l.mlSold) || 0,
       unitPrice: Number(l.unitPrice) || 0,
     }));
+    const computed = items.reduce((s, i) => s + i.unitPrice, 0);
+    const fa = finalAmountStr.trim() === "" ? null : Number(finalAmountStr);
+    const weight = weightStr.trim() === "" ? null : Number(weightStr);
     const ok = onSave(order.id, {
       customerName: name,
       customerAddress: address,
       customerPhone: phone,
+      customerCity: city,
+      customerPincode: pincode,
+      customerEmail: email,
+      customerAltPhone: altPhone,
+      weightG: weight !== null && Number.isFinite(weight) ? weight : null,
+      boxId: boxId || null,
+      paymentMode: cod ? "COD" : "Prepaid",
+      amountOverride:
+        fa !== null && Number.isFinite(fa) && fa !== computed ? fa : null,
       items,
     });
     if (ok) onOpenChange(false);
@@ -142,10 +173,62 @@ export function EditOrderDialog({
                   <Label htmlFor="eo-phone" className="text-xs">Phone</Label>
                   <Input id="eo-phone" value={phone} onChange={(e) => setPhone(e.target.value)} className="h-9 text-sm" />
                 </div>
+                <div className="space-y-1">
+                  <Label htmlFor="eo-alt" className="text-xs">Alternate phone</Label>
+                  <Input id="eo-alt" value={altPhone} onChange={(e) => setAltPhone(e.target.value)} className="h-9 text-sm" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="eo-email" className="text-xs">Email</Label>
+                  <Input id="eo-email" value={email} onChange={(e) => setEmail(e.target.value)} className="h-9 text-sm" />
+                </div>
               </div>
               <div className="space-y-1">
                 <Label htmlFor="eo-address" className="text-xs">Address</Label>
                 <Input id="eo-address" value={address} onChange={(e) => setAddress(e.target.value)} className="h-9 text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label htmlFor="eo-city" className="text-xs">City</Label>
+                  <Input id="eo-city" value={city} onChange={(e) => setCity(e.target.value)} className="h-9 text-sm" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="eo-pin" className="text-xs">Pincode</Label>
+                  <Input id="eo-pin" value={pincode} onChange={(e) => setPincode(e.target.value)} className="h-9 text-sm" />
+                </div>
+              </div>
+
+              {/* Shipping & payment */}
+              <div className="grid grid-cols-2 gap-2 border-t border-stone-100 pt-2">
+                <div className="space-y-1">
+                  <Label htmlFor="eo-box" className="text-xs">Box</Label>
+                  <select
+                    id="eo-box"
+                    value={boxId}
+                    onChange={(e) => setBoxId(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-stone-200 bg-white px-2 text-sm text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  >
+                    {boxes.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="eo-weight" className="text-xs">Weight (g, optional)</Label>
+                  <Input id="eo-weight" type="number" min="0" value={weightStr} onChange={(e) => setWeightStr(e.target.value)} className="h-9 text-sm" />
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-stone-600 select-none">
+                  <input
+                    type="checkbox"
+                    checked={cod}
+                    onChange={(e) => setCod(e.target.checked)}
+                    className="size-3.5 accent-amber-700"
+                  />
+                  COD (else Prepaid)
+                </label>
+                <div className="space-y-1">
+                  <Label htmlFor="eo-amount" className="text-xs">Final amount (₹, optional)</Label>
+                  <Input id="eo-amount" type="number" min="0" value={finalAmountStr} onChange={(e) => setFinalAmountStr(e.target.value)} placeholder={`${total}`} className="h-9 text-sm" />
+                </div>
               </div>
             </div>
 

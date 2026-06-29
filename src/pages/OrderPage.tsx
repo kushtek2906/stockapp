@@ -20,6 +20,7 @@ import {
   type MatchedOrderItem,
   type MatchStatus,
 } from "../lib/order";
+import { loadPrefs } from "../lib/prefs";
 import { formatDateTime } from "../lib/utils";
 import { cn } from "../lib/utils";
 import {
@@ -306,15 +307,43 @@ export function OrderPage({
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
+  const [customerCity, setCustomerCity] = useState("");
+  const [customerPincode, setCustomerPincode] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [customerAltPhone, setCustomerAltPhone] = useState("");
+  const [weightStr, setWeightStr] = useState("");
+  const [cod, setCod] = useState(false);
+  const [finalAmountStr, setFinalAmountStr] = useState("");
+
+  const boxes = useMemo(() => loadPrefs().boxes, []);
+  const [boxId, setBoxId] = useState<string>(() => boxes[0]?.id ?? "");
 
   const bill = useMemo(() => formatBill(items, showBrand), [items, showBrand]);
 
   // Billable = has a resolved size + price (tracked or not). These go on the order;
   // only the tracked ones also deduct stock.
-  const billable = useMemo(
-    () => items.filter((it) => it.unitPrice !== null && it.size !== null).length,
+  const billableItems = useMemo(
+    () => items.filter((it) => it.unitPrice !== null && it.size !== null),
     [items],
   );
+  const billable = billableItems.length;
+  const computedTotal = useMemo(
+    () => billableItems.reduce((s, it) => s + (it.unitPrice as number), 0),
+    [billableItems],
+  );
+
+  const resetCustomer = () => {
+    setCustomerName("");
+    setCustomerPhone("");
+    setCustomerAddress("");
+    setCustomerCity("");
+    setCustomerPincode("");
+    setCustomerEmail("");
+    setCustomerAltPhone("");
+    setWeightStr("");
+    setCod(false);
+    setFinalAmountStr("");
+  };
 
   const handleGenerate = () => {
     if (catalog === null) {
@@ -374,17 +403,28 @@ export function OrderPage({
         unitPrice: it.unitPrice as number,
       }));
 
+    const weight = weightStr.trim() === "" ? null : Number(weightStr);
+    const fa = finalAmountStr.trim() === "" ? null : Number(finalAmountStr);
+    const amountOverride =
+      fa !== null && Number.isFinite(fa) && fa !== computedTotal ? fa : null;
+
     onConfirmOrder({
       customerName,
       customerAddress,
       customerPhone,
+      customerCity,
+      customerPincode,
+      customerEmail,
+      customerAltPhone,
+      weightG: weight !== null && Number.isFinite(weight) ? weight : null,
+      boxId: boxId || null,
+      paymentMode: cod ? "COD" : "Prepaid",
+      amountOverride,
       items: orderItems,
     });
 
     setConfirmed(true);
-    setCustomerName("");
-    setCustomerPhone("");
-    setCustomerAddress("");
+    resetCustomer();
   };
 
   return (
@@ -493,9 +533,9 @@ export function OrderPage({
 
                 <div className="space-y-2 rounded-lg border border-stone-100 bg-stone-50 p-3">
                   <p className="text-xs font-medium text-stone-500">
-                    Customer details{" "}
+                    Customer & shipping{" "}
                     <span className="font-normal text-stone-400">
-                      (optional — you can add these later from Order History)
+                      (optional — you can add/edit these later from Order History)
                     </span>
                   </p>
                   <div className="grid grid-cols-2 gap-2">
@@ -513,6 +553,20 @@ export function OrderPage({
                       className="h-9 text-sm"
                       aria-label="Customer phone"
                     />
+                    <Input
+                      value={customerAltPhone}
+                      onChange={(e) => setCustomerAltPhone(e.target.value)}
+                      placeholder="Alternate phone"
+                      className="h-9 text-sm"
+                      aria-label="Alternate phone"
+                    />
+                    <Input
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
+                      placeholder="Email"
+                      className="h-9 text-sm"
+                      aria-label="Customer email"
+                    />
                   </div>
                   <Input
                     value={customerAddress}
@@ -521,6 +575,70 @@ export function OrderPage({
                     className="h-9 text-sm"
                     aria-label="Customer address"
                   />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      value={customerCity}
+                      onChange={(e) => setCustomerCity(e.target.value)}
+                      placeholder="City"
+                      className="h-9 text-sm"
+                      aria-label="Customer city"
+                    />
+                    <Input
+                      value={customerPincode}
+                      onChange={(e) => setCustomerPincode(e.target.value)}
+                      placeholder="Pincode"
+                      className="h-9 text-sm"
+                      aria-label="Customer pincode"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <select
+                      value={boxId}
+                      onChange={(e) => setBoxId(e.target.value)}
+                      className="h-9 rounded-lg border border-stone-200 bg-white px-2 text-sm text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                      aria-label="Shipping box"
+                    >
+                      {boxes.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          📦 {b.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={weightStr}
+                      onChange={(e) => setWeightStr(e.target.value)}
+                      placeholder="Weight (g, optional)"
+                      className="h-9 text-sm"
+                      aria-label="Weight in grams"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-stone-600 select-none">
+                      <input
+                        type="checkbox"
+                        checked={cod}
+                        onChange={(e) => setCod(e.target.checked)}
+                        className="size-3.5 accent-amber-700"
+                        aria-label="Cash on delivery"
+                      />
+                      COD {cod ? "" : "(default: Prepaid)"}
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-stone-400">₹</span>
+                      <Input
+                        type="number"
+                        min="0"
+                        value={finalAmountStr}
+                        onChange={(e) => setFinalAmountStr(e.target.value)}
+                        placeholder={`${computedTotal}`}
+                        className="h-9 w-24 text-sm"
+                        aria-label="Final amount override"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex gap-2">

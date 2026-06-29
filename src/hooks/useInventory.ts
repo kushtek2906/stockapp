@@ -14,6 +14,7 @@ import type {
   InventoryStore,
   Order,
   OrderLineRecord,
+  PaymentMode,
   Perfume,
   Sale,
 } from "../types";
@@ -87,10 +88,22 @@ export interface OrderItemInput {
   unitPrice: number;
 }
 
-export interface ConfirmOrderInput {
+/** Customer + shipping/payment fields shared by confirm & edit. */
+export interface OrderDetailsInput {
   customerName: string;
   customerAddress: string;
   customerPhone: string;
+  customerCity: string;
+  customerPincode: string;
+  customerEmail: string;
+  customerAltPhone: string;
+  weightG: number | null;
+  boxId: string | null;
+  paymentMode: PaymentMode;
+  amountOverride: number | null;
+}
+
+export interface ConfirmOrderInput extends OrderDetailsInput {
   items: OrderItemInput[];
 }
 
@@ -100,10 +113,7 @@ export interface ConfirmOrderResult {
   skippedNoInv: number;
 }
 
-export interface EditOrderInput {
-  customerName: string;
-  customerAddress: string;
-  customerPhone: string;
+export interface EditOrderInput extends OrderDetailsInput {
   items: OrderItemInput[];
 }
 
@@ -750,12 +760,23 @@ export function useInventory() {
       }
 
       const total = items.reduce((sum, i) => sum + i.unitPrice, 0);
+      const nextSeq =
+        store.orders.reduce((max, o) => Math.max(max, o.seq ?? 0), 0) + 1;
       const order: Order = {
         id: generateId("order"),
         date: new Date().toISOString(),
+        seq: nextSeq,
         customerName: input.customerName.trim(),
         customerAddress: input.customerAddress.trim(),
         customerPhone: input.customerPhone.trim(),
+        customerCity: input.customerCity.trim(),
+        customerPincode: input.customerPincode.trim(),
+        customerEmail: input.customerEmail.trim(),
+        customerAltPhone: input.customerAltPhone.trim(),
+        weightG: input.weightG,
+        boxId: input.boxId,
+        paymentMode: input.paymentMode,
+        amountOverride: input.amountOverride,
         items,
         total,
       };
@@ -870,6 +891,14 @@ export function useInventory() {
         customerName: input.customerName.trim(),
         customerAddress: input.customerAddress.trim(),
         customerPhone: input.customerPhone.trim(),
+        customerCity: input.customerCity.trim(),
+        customerPincode: input.customerPincode.trim(),
+        customerEmail: input.customerEmail.trim(),
+        customerAltPhone: input.customerAltPhone.trim(),
+        weightG: input.weightG,
+        boxId: input.boxId,
+        paymentMode: input.paymentMode,
+        amountOverride: input.amountOverride,
         items,
         total,
       };

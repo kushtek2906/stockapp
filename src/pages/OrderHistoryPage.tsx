@@ -1,5 +1,14 @@
-import { ChevronDown, Pencil, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  Download,
+  Package,
+  Pencil,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { BoxSettingsDialog } from "../components/dialogs/BoxSettingsDialog";
 import { EditOrderDialog } from "../components/dialogs/EditOrderDialog";
 import {
   PerfumePreviewDialog,
@@ -7,6 +16,8 @@ import {
 } from "../components/dialogs/PerfumePreviewDialog";
 import { Button } from "../components/ui/Button";
 import type { EditOrderInput } from "../hooks/useInventory";
+import { loadPrefs } from "../lib/prefs";
+import { buildShipmentCsv, missingShippingFields } from "../lib/shipmentCsv";
 import { cn, formatCurrency, formatDateTime } from "../lib/utils";
 import type { Brand, Order, OrderLineRecord, Perfume } from "../types";
 
@@ -33,6 +44,9 @@ export function OrderHistoryPage({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<Order | null>(null);
   const [preview, setPreview] = useState<PerfumePreviewTarget | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [boxSettingsOpen, setBoxSettingsOpen] = useState(false);
+  const [boxes, setBoxes] = useState(() => loadPrefs().boxes);
 
   const perfumeMap = useMemo<Map<string, Perfume>>(
     () => new Map(perfumes.map((p) => [p.perfumeId, p])),
@@ -69,13 +83,71 @@ export function OrderHistoryPage({
     [orders],
   );
 
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const allSelected = sorted.length > 0 && sorted.every((o) => selected.has(o.id));
+  const toggleSelectAll = () => {
+    setSelected(allSelected ? new Set() : new Set(sorted.map((o) => o.id)));
+  };
+
+  const handleGenerateCsv = () => {
+    const chosen = sorted.filter((o) => selected.has(o.id));
+    if (chosen.length === 0) {
+      toast.error("Select at least one order first.");
+      return;
+    }
+    const incomplete = chosen.filter((o) => missingShippingFields(o).length > 0);
+    if (incomplete.length > 0) {
+      toast.warning(
+        `${incomplete.length} selected order(s) are missing city/pincode/phone — those cells will be blank. Edit the order to fill them.`,
+      );
+    }
+    const csv = buildShipmentCsv(chosen, boxes);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pickups_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success(`Pickup CSV generated for ${chosen.length} order(s).`);
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-stone-900">Order History</h1>
-        <p className="mt-1 text-sm text-stone-500">
-          Every confirmed order. Editing or deleting one adjusts your stock to match.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-stone-900">Order History</h1>
+          <p className="mt-1 text-sm text-stone-500">
+            Every confirmed order. Editing or deleting one adjusts your stock to match.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setBoxSettingsOpen(true)}
+          >
+            <Package className="size-3.5" aria-hidden />
+            Box sizes
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleGenerateCsv}
+            disabled={selected.size === 0}
+          >
+            <Download className="size-3.5" aria-hidden />
+            Generate pickup CSV ({selected.size})
+          </Button>
+        </div>
       </div>
 
       {sorted.length === 0 ? (
@@ -88,6 +160,15 @@ export function OrderHistoryPage({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-stone-100 bg-stone-50/80">
+                <th className="w-8 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    aria-label="Select all orders"
+                    className="size-3.5 accent-amber-700"
+                  />
+                </th>
                 <th className="w-8 px-3 py-3" />
                 <th className="px-4 py-3 text-left font-medium text-stone-500">Date</th>
                 <th className="px-4 py-3 text-left font-medium text-stone-500">Customer</th>
@@ -103,6 +184,15 @@ export function OrderHistoryPage({
                 return (
                   <Fragment key={order.id}>
                     <tr className="border-b border-stone-100 last:border-0">
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(order.id)}
+                          onChange={() => toggleSelect(order.id)}
+                          aria-label={`Select order ${order.customerName}`}
+                          className="size-3.5 accent-amber-700"
+                        />
+                      </td>
                       <td className="px-3 py-3">
                         <button
                           type="button"
@@ -125,6 +215,15 @@ export function OrderHistoryPage({
                         </p>
                         {order.customerPhone !== "" && (
                           <p className="text-xs text-stone-400">{order.customerPhone}</p>
+                        )}
+                        {missingShippingFields(order).length > 0 && (
+                          <span
+                            className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-600"
+                            title={`Missing for pickup: ${missingShippingFields(order).join(", ")}`}
+                          >
+                            <TriangleAlert className="size-3" aria-hidden />
+                            needs {missingShippingFields(order).join(", ")}
+                          </span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-stone-600">
@@ -179,6 +278,7 @@ export function OrderHistoryPage({
                     </tr>
                     {isOpen && (
                       <tr className="border-b border-stone-100 bg-stone-50/50 last:border-0">
+                        <td />
                         <td />
                         <td colSpan={5} className="px-4 py-3">
                           {order.customerAddress !== "" && (
@@ -244,6 +344,12 @@ export function OrderHistoryPage({
         }}
         target={preview}
         onSetImage={handleSetImage}
+      />
+
+      <BoxSettingsDialog
+        open={boxSettingsOpen}
+        onOpenChange={setBoxSettingsOpen}
+        onSaved={() => setBoxes(loadPrefs().boxes)}
       />
     </div>
   );

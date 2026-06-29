@@ -1,3 +1,5 @@
+import type { BoxType } from "../types";
+
 const PREFS_KEY = "decantverse_prefs";
 
 interface AppPrefs {
@@ -14,7 +16,16 @@ interface AppPrefs {
   /** Competitor's public Google Sheet used for price comparison. */
   competitorSheetId: string;
   competitorSheetGid: string;
+  /** Shipping box presets used to fill the pickup CSV (edit dims in-app). */
+  boxes: BoxType[];
 }
+
+// Placeholder dimensions — edit them in-app via Order History → "Box sizes".
+const DEFAULT_BOXES: BoxType[] = [
+  { id: "box-small", name: "Small", lengthCm: 15, widthCm: 10, heightCm: 5, weightG: 150 },
+  { id: "box-medium", name: "Medium", lengthCm: 20, widthCm: 15, heightCm: 10, weightG: 300 },
+  { id: "box-large", name: "Large", lengthCm: 25, widthCm: 20, heightCm: 15, weightG: 500 },
+];
 
 const DEFAULT_PREFS: AppPrefs = {
   rememberLastPerfume: false,
@@ -27,6 +38,7 @@ const DEFAULT_PREFS: AppPrefs = {
   costSheetGid: "1021089370",
   competitorSheetId: "118f-ZLbawdsi38eDv9TqV7pq-yxjaHPdunruCwuerb8",
   competitorSheetGid: "0",
+  boxes: DEFAULT_BOXES,
 };
 
 export function loadPrefs(): AppPrefs {

@@ -48,13 +48,34 @@ export async function loadInventory(): Promise<InventoryStore> {
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let pending: InventoryStore | null = null;
 
+function upsertNow(store: InventoryStore): void {
+  if (!isSupabaseConfigured || supabase === null) return;
+  void supabase
+    .from(APP_STATE_TABLE)
+    .upsert({ id: APP_STATE_ID, data: store, updated_at: new Date().toISOString() })
+    .then(({ error }) => {
+      if (error) console.warn("Supabase save failed (kept local copy).", error);
+    });
+}
+
+/** Push any debounced-but-not-yet-sent change to Supabase immediately. Called when
+ * the tab is hidden/closing so a last-second edit isn't lost in the debounce window. */
+export function flushPendingSave(): void {
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  const toSave = pending;
+  pending = null;
+  if (toSave !== null) upsertNow(toSave);
+}
+
 /** Save the inventory: cache to localStorage immediately, then debounce-upsert to
  * Supabase (cloud mode only). */
 export function saveInventory(store: InventoryStore): void {
   saveStore(store); // immediate, synchronous offline cache
 
   if (!isSupabaseConfigured || supabase === null) return;
-  const client = supabase; // narrow once for the deferred callback
 
   pending = store;
   if (saveTimer !== null) clearTimeout(saveTimer);
@@ -62,12 +83,15 @@ export function saveInventory(store: InventoryStore): void {
     const toSave = pending;
     pending = null;
     saveTimer = null;
-    if (toSave === null) return;
-    void client
-      .from(APP_STATE_TABLE)
-      .upsert({ id: APP_STATE_ID, data: toSave, updated_at: new Date().toISOString() })
-      .then(({ error }) => {
-        if (error) console.warn("Supabase save failed (kept local copy).", error);
-      });
+    if (toSave !== null) upsertNow(toSave);
   }, 800);
+}
+
+// Flush a pending save when the page is backgrounded or closing (covers the
+// debounce gap). visibilitychange→hidden is the reliable signal on mobile + desktop.
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPendingSave();
+  });
+  window.addEventListener("pagehide", () => flushPendingSave());
 }
