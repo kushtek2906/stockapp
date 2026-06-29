@@ -72,6 +72,15 @@ the code), and **Vercel** (hosts the live site). All free.
 > above are what protect your data. (Supabase used to call this the "anon public" key; the env var
 > name stays `VITE_SUPABASE_ANON_KEY`, you just paste the publishable key into it.)
 
+5. **Create the image bucket** (so perfume/brand photos are stored as files, not bloating your
+   data). Left sidebar → **Storage** → **New bucket**:
+   - Name it exactly **`images`** and toggle **Public bucket** ON → Create.
+   - Then add an upload policy: open the `images` bucket → **Policies** → **New policy** → use the
+     template **"Allow authenticated uploads"** (an INSERT policy for the `authenticated` role) →
+     save. (Public read is already handled by the Public toggle.)
+   - That's it — no env var needed; the app uses the `images` bucket automatically. Without this
+     bucket, uploads fall back to storing the image inline (fine for a few, slow for many).
+
 ### Try it locally first (optional but recommended)
 Create a file named `.env` in the project root (copy `.env.example`) and fill in:
 

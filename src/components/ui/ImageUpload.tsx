@@ -1,8 +1,10 @@
 import { ImageIcon, Trash2, Upload } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { uploadImage } from "../../lib/imageStore";
+import { isSupabaseConfigured } from "../../lib/supabase";
 
-const MAX_BYTES = 300 * 1024;
+const MAX_BYTES = 3 * 1024 * 1024;
 
 interface ImageUploadProps {
   value?: string;
@@ -12,11 +14,32 @@ interface ImageUploadProps {
 
 export function ImageUpload({ value, onChange, label = "Image" }: ImageUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
-  function handleFile(file: File) {
+  async function handleFile(file: File) {
     if (file.size > MAX_BYTES) {
-      toast.warning(`Image is ${(file.size / 1024).toFixed(0)} KB — keep under 300 KB for best localStorage performance.`);
+      toast.warning(
+        `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — large images upload/display slower. Consider a smaller one.`,
+      );
     }
+
+    // Cloud mode → upload to Supabase Storage, store just the URL.
+    if (isSupabaseConfigured) {
+      setUploading(true);
+      try {
+        const url = await uploadImage(file);
+        onChange(url);
+      } catch (e) {
+        toast.error(
+          `Image upload failed: ${e instanceof Error ? e.message : "unknown error"}`,
+        );
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+
+    // Local mode (no Supabase) → keep a base64 data URL so dev still works.
     const reader = new FileReader();
     reader.onload = (e) => {
       const result = e.target?.result;
@@ -27,13 +50,13 @@ export function ImageUpload({ value, onChange, label = "Image" }: ImageUploadPro
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file !== undefined) handleFile(file);
+    if (file !== undefined) void handleFile(file);
   }
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file !== undefined) handleFile(file);
+    if (file !== undefined) void handleFile(file);
   }
 
   return (
@@ -55,6 +78,11 @@ export function ImageUpload({ value, onChange, label = "Image" }: ImageUploadPro
             <Trash2 className="size-3" aria-hidden />
           </button>
         </div>
+      ) : uploading ? (
+        <div className="flex h-24 w-full flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50 text-amber-600">
+          <Upload className="size-5 animate-pulse" aria-hidden />
+          <span className="text-xs font-medium">Uploading…</span>
+        </div>
       ) : (
         <div
           role="button"
@@ -70,7 +98,7 @@ export function ImageUpload({ value, onChange, label = "Image" }: ImageUploadPro
         >
           <Upload className="size-5" aria-hidden />
           <span className="text-xs font-medium">Click or drag to upload</span>
-          <span className="text-[10px]">PNG, JPG · max 300 KB</span>
+          <span className="text-[10px]">PNG, JPG · max 3 MB</span>
         </div>
       )}
       <input

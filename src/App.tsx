@@ -28,6 +28,7 @@ export default function App() {
     addPerfume,
     editPerfume,
     deletePerfume,
+    setPerfumeImage,
     recordSale,
     editSale,
     deleteSale,
@@ -113,8 +114,10 @@ export default function App() {
           orders={orders}
           perfumes={perfumes}
           brands={brands}
+          remainingMlMap={remainingMlMap}
           onDelete={deleteOrder}
           onEdit={editOrder}
+          onSetPerfumeImage={setPerfumeImage}
         />
       )}
       {activePage === "compare" && <ComparisonPage myCatalog={catalog} />}

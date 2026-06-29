@@ -346,6 +346,33 @@ export function useInventory() {
     [store, persist],
   );
 
+  const setPerfumeImage = useCallback(
+    (perfumeId: string, imageUrl: string | null): void => {
+      const perfume = store.perfumes.find((p) => p.perfumeId === perfumeId);
+      if (perfume === undefined) return;
+      const updatedPerfumes = store.perfumes.map((p) =>
+        p.perfumeId === perfumeId
+          ? { ...p, imageUrl: imageUrl ?? undefined }
+          : p,
+      );
+      const entry = makeAuditEntry(
+        "edit",
+        "perfume",
+        perfumeId,
+        `${imageUrl !== null ? "Set" : "Removed"} image for "${perfume.name}" (${perfume.perfumeCode})`,
+      );
+      persist({
+        ...store,
+        perfumes: updatedPerfumes,
+        auditLog: [...store.auditLog, entry],
+      });
+      toast.success(
+        imageUrl !== null ? "Image saved." : "Image removed.",
+      );
+    },
+    [store, persist],
+  );
+
   const deletePerfume = useCallback(
     (perfumeId: string): void => {
       const perfume = store.perfumes.find((p) => p.perfumeId === perfumeId);
@@ -879,6 +906,7 @@ export function useInventory() {
     addPerfume,
     editPerfume,
     deletePerfume,
+    setPerfumeImage,
     recordSale,
     editSale,
     deleteSale,

@@ -1,29 +1,67 @@
 import { ChevronDown, Pencil, Trash2 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { EditOrderDialog } from "../components/dialogs/EditOrderDialog";
+import {
+  PerfumePreviewDialog,
+  type PerfumePreviewTarget,
+} from "../components/dialogs/PerfumePreviewDialog";
 import { Button } from "../components/ui/Button";
 import type { EditOrderInput } from "../hooks/useInventory";
 import { cn, formatCurrency, formatDateTime } from "../lib/utils";
-import type { Brand, Order, Perfume } from "../types";
+import type { Brand, Order, OrderLineRecord, Perfume } from "../types";
 
 interface OrderHistoryPageProps {
   orders: Order[];
   perfumes: Perfume[];
   brands: Brand[];
+  remainingMlMap: Record<string, number>;
   onDelete: (orderId: string) => void;
   onEdit: (orderId: string, input: EditOrderInput) => boolean;
+  onSetPerfumeImage: (perfumeId: string, imageUrl: string | null) => void;
 }
 
 export function OrderHistoryPage({
   orders,
   perfumes,
   brands,
+  remainingMlMap,
   onDelete,
   onEdit,
+  onSetPerfumeImage,
 }: OrderHistoryPageProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<Order | null>(null);
+  const [preview, setPreview] = useState<PerfumePreviewTarget | null>(null);
+
+  const perfumeMap = useMemo<Map<string, Perfume>>(
+    () => new Map(perfumes.map((p) => [p.perfumeId, p])),
+    [perfumes],
+  );
+
+  const openPreview = (it: OrderLineRecord) => {
+    const p = it.perfumeId !== null ? perfumeMap.get(it.perfumeId) : undefined;
+    setPreview({
+      perfumeId: it.perfumeId,
+      name: it.perfumeName,
+      brand: it.brand,
+      imageUrl: p?.imageUrl,
+      remainingMl:
+        it.perfumeId !== null ? (remainingMlMap[it.perfumeId] ?? null) : null,
+      totalMl: p?.totalMl ?? null,
+      costPrice: p?.costPrice ?? null,
+      lineSize: it.size,
+      lineMl: it.mlSold,
+      lineUnitPrice: it.unitPrice,
+    });
+  };
+
+  const handleSetImage = (perfumeId: string, imageUrl: string | null) => {
+    onSetPerfumeImage(perfumeId, imageUrl);
+    setPreview((prev) =>
+      prev !== null ? { ...prev, imageUrl: imageUrl ?? undefined } : prev,
+    );
+  };
 
   // Newest first.
   const sorted = useMemo(
@@ -151,15 +189,20 @@ export function OrderHistoryPage({
                           )}
                           <ul className="space-y-1">
                             {order.items.map((it, i) => (
-                              <li key={i} className="flex items-center justify-between text-sm">
-                                <span className="text-stone-700">
+                              <li key={i} className="flex items-center justify-between gap-2 text-sm">
+                                <button
+                                  type="button"
+                                  onClick={() => openPreview(it)}
+                                  className="text-left text-stone-700 hover:text-amber-700 hover:underline"
+                                  title="View perfume"
+                                >
                                   {it.brand !== "" ? `${it.brand} ` : ""}
                                   {it.perfumeName}
                                   {it.size !== null ? ` (${it.size}ml)` : ` (${it.mlSold}ml)`}
                                   {it.perfumeId === null && (
                                     <span className="ml-1 text-xs text-amber-600">not tracked</span>
                                   )}
-                                </span>
+                                </button>
                                 <span className="font-medium text-stone-700">
                                   {formatCurrency(it.unitPrice)}
                                 </span>
@@ -193,6 +236,15 @@ export function OrderHistoryPage({
           onSave={onEdit}
         />
       )}
+
+      <PerfumePreviewDialog
+        open={preview !== null}
+        onOpenChange={(o) => {
+          if (!o) setPreview(null);
+        }}
+        target={preview}
+        onSetImage={handleSetImage}
+      />
     </div>
   );
 }
