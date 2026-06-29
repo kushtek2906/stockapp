@@ -174,7 +174,7 @@ export function ComparisonPage({ myCatalog }: ComparisonPageProps) {
           {/* Detailed table */}
           <div className="overflow-hidden rounded-xl border border-stone-200 bg-white">
             <div className="max-h-[calc(100vh-22rem)] overflow-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[44rem] text-sm">
                 <thead className="sticky top-0 bg-stone-50/95 backdrop-blur">
                   <tr className="border-b border-stone-100">
                     <th className="px-4 py-3 text-left font-medium text-stone-500">

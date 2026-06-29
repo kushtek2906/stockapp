@@ -48,8 +48,8 @@ export function SalesLog({
   );
 
   return (
-    <div className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
+      <table className="w-full min-w-[36rem] text-sm">
         <thead>
           <tr className="border-b border-stone-100 bg-stone-50/80">
             <th className="px-4 py-3 text-left font-medium text-stone-500">

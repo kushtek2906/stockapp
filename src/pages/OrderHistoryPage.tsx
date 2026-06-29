@@ -156,8 +156,124 @@ export function OrderHistoryPage({
           tab and it'll show up here.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-          <table className="w-full text-sm">
+        <>
+        {/* Mobile: card list */}
+        <div className="space-y-3 md:hidden">
+          {sorted.map((order) => {
+            const isOpen = expanded === order.id;
+            const isConfirming = confirmDeleteId === order.id;
+            const missing = missingShippingFields(order);
+            return (
+              <div key={order.id} className="rounded-xl border border-stone-200 bg-white p-3">
+                <div className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(order.id)}
+                    onChange={() => toggleSelect(order.id)}
+                    aria-label={`Select order ${order.customerName}`}
+                    className="mt-1 size-4 accent-amber-700"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-stone-900">
+                      {order.customerName !== "" ? order.customerName : "—"}
+                    </p>
+                    <p className="text-xs text-stone-400">
+                      {formatDateTime(order.date)}
+                      {order.customerPhone !== "" ? ` · ${order.customerPhone}` : ""}
+                    </p>
+                    {missing.length > 0 && (
+                      <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-600">
+                        <TriangleAlert className="size-3" aria-hidden />
+                        needs {missing.join(", ")}
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-medium text-stone-800">
+                    {formatCurrency(order.total)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(isOpen ? null : order.id)}
+                  className="mt-2 flex items-center gap-1 text-xs text-stone-500 hover:text-stone-700"
+                >
+                  <ChevronDown
+                    className={cn("size-4 transition-transform", isOpen && "rotate-180")}
+                    aria-hidden
+                  />
+                  {order.items.length} item{order.items.length !== 1 ? "s" : ""}
+                </button>
+                {isOpen && (
+                  <div className="mt-2 border-t border-stone-100 pt-2">
+                    {order.customerAddress !== "" && (
+                      <p className="mb-2 text-xs text-stone-500">
+                        <span className="text-stone-400">Address: </span>
+                        {order.customerAddress}
+                      </p>
+                    )}
+                    <ul className="space-y-1">
+                      {order.items.map((it, i) => (
+                        <li key={i} className="flex items-center justify-between gap-2 text-sm">
+                          <button
+                            type="button"
+                            onClick={() => openPreview(it)}
+                            className="text-left text-stone-700 hover:text-amber-700 hover:underline"
+                          >
+                            {it.brand !== "" ? `${it.brand} ` : ""}
+                            {it.perfumeName}
+                            {it.size !== null ? ` (${it.size}ml)` : ` (${it.mlSold}ml)`}
+                          </button>
+                          <span className="font-medium text-stone-700">
+                            {formatCurrency(it.unitPrice)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="mt-2 flex justify-end gap-1">
+                  {isConfirming ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => {
+                          onDelete(order.id);
+                          setConfirmDeleteId(null);
+                        }}
+                      >
+                        Delete &amp; restore
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => setEditTarget(order)}>
+                        <Pencil className="size-3.5" aria-hidden />
+                        Edit
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="Delete order"
+                        className="text-red-400 hover:bg-red-50 hover:text-red-600"
+                        onClick={() => setConfirmDeleteId(order.id)}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop: table */}
+        <div className="hidden overflow-x-auto rounded-xl border border-stone-200 bg-white md:block">
+          <table className="w-full min-w-[44rem] text-sm">
             <thead>
               <tr className="border-b border-stone-100 bg-stone-50/80">
                 <th className="w-8 px-3 py-3">
@@ -318,6 +434,7 @@ export function OrderHistoryPage({
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       <p className="text-xs text-stone-400">

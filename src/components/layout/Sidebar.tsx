@@ -7,6 +7,7 @@ import {
   Package,
   ReceiptText,
   ShoppingCart,
+  X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import logo from "../../assets/logo.png";
@@ -61,9 +62,11 @@ const NAV_ITEMS: NavItem[] = [
 interface SidebarProps {
   activePage: Page;
   onNavigate: (page: Page) => void;
+  /** Provided in the mobile drawer to render a close button. */
+  onClose?: () => void;
 }
 
-export function Sidebar({ activePage, onNavigate }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, onClose }: SidebarProps) {
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
   useEffect(() => {
@@ -76,7 +79,17 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
   };
 
   return (
-    <aside className="flex h-screen w-56 flex-col border-r border-stone-200 bg-white px-3 py-5">
+    <aside className="flex h-screen w-64 flex-col border-r border-stone-200 bg-white px-3 py-5 lg:w-56">
+      {onClose !== undefined && (
+        <button
+          type="button"
+          aria-label="Close menu"
+          onClick={onClose}
+          className="mb-1 self-end rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 lg:hidden"
+        >
+          <X className="size-5" aria-hidden />
+        </button>
+      )}
       <div className="mb-6 flex flex-col items-center px-2">
         <img src={logo} alt="DECANTVERSE" className="h-20 w-auto object-contain" />
         <p className="mt-1 text-[10px] font-medium uppercase tracking-widest text-stone-400">

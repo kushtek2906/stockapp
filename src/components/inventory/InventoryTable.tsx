@@ -98,8 +98,107 @@ export function InventoryTable({
         />
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-        <table className="w-full text-sm">
+      {/* Mobile: card list */}
+      <div className="space-y-3 md:hidden">
+        {filtered.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-stone-200 bg-white p-8 text-center text-sm text-stone-400">
+            No perfumes found.
+          </div>
+        ) : (
+          filtered.map((p) => {
+            const remaining = remainingMlMap[p.perfumeId] ?? 0;
+            const status = getStockStatus(remaining);
+            const isConfirming = confirmDeleteId === p.perfumeId;
+            return (
+              <div
+                key={p.perfumeId}
+                className={cn(
+                  "rounded-xl border border-stone-200 bg-white p-3",
+                  STATUS_ROW_CLASS[status],
+                )}
+              >
+                <div className="flex items-start gap-3">
+                  {p.imageUrl !== undefined ? (
+                    <img
+                      src={p.imageUrl}
+                      alt={p.name}
+                      className="size-10 shrink-0 rounded border border-stone-200 object-cover"
+                    />
+                  ) : (
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded bg-stone-100 text-stone-400">
+                      <ImageIcon className="size-4" aria-hidden />
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-stone-900">{p.name}</p>
+                    <p className="text-xs text-stone-400">
+                      {brandMap[p.brandId]?.name ?? "—"} ·{" "}
+                      <span className="font-mono text-amber-700">{p.perfumeCode}</span>
+                    </p>
+                  </div>
+                  <Badge variant={STATUS_BADGE_VARIANT[status]}>
+                    {STATUS_LABEL[status]}
+                  </Badge>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <button
+                    type="button"
+                    onClick={() => setQtyTarget(p)}
+                    className="rounded px-1 py-0.5 text-stone-700 hover:bg-amber-50 hover:text-amber-800"
+                  >
+                    {remaining.toFixed(1)} ml
+                    <span className="ml-1 text-xs text-stone-400">/ {p.totalMl} ml</span>
+                  </button>
+                  <span className="text-stone-600">{formatCurrency(p.costPrice)}</span>
+                </div>
+                <div className="mt-2 flex justify-end gap-1">
+                  {isConfirming ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => {
+                          onDelete(p.perfumeId);
+                          setConfirmDeleteId(null);
+                        }}
+                      >
+                        Confirm delete
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => setEditTarget(p)}>
+                        <Pencil className="size-3.5" aria-hidden />
+                        Edit
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Delete ${p.name}`}
+                        className="text-red-400 hover:bg-red-50 hover:text-red-600"
+                        onClick={() => setConfirmDeleteId(p.perfumeId)}
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Desktop: table */}
+      <div className="hidden overflow-x-auto rounded-xl border border-stone-200 bg-white md:block">
+        <table className="w-full min-w-[44rem] text-sm">
           <thead>
             <tr className="border-b border-stone-100 bg-stone-50/80">
               <th className="px-4 py-3 text-left font-medium text-stone-500">
