@@ -11,24 +11,35 @@ import { toast } from "sonner";
 import type { ConfirmOrderInput, ConfirmOrderResult } from "../hooks/useInventory";
 import {
   clearItemMatch,
+  computeChargedTotal,
   displayName,
+  effectiveMl,
   formatBill,
   matchOrder,
   parseOrder,
   recomputeItem,
+  setCustomItem,
   setItemSize,
   type MatchedOrderItem,
   type MatchStatus,
 } from "../lib/order";
 import { loadPrefs } from "../lib/prefs";
-import { formatDateTime } from "../lib/utils";
+import { formatCurrency, formatDateTime } from "../lib/utils";
 import { cn } from "../lib/utils";
+import {
+  buildCostIndex,
+  computeOrderProfit,
+  lineProfit,
+  lookupCost,
+  type CostIndex,
+} from "../lib/profit";
 import {
   DECANT_SIZES,
   type DecantCatalog,
   type DecantCatalogEntry,
   type DecantSize,
   type Perfume,
+  type PerfumeCost,
 } from "../types";
 import { SheetSettingsDialog } from "../components/order/SheetSettingsDialog";
 import { Badge } from "../components/ui/Badge";
@@ -40,6 +51,7 @@ import { Label } from "../components/ui/Label";
 interface OrderPageProps {
   catalog: DecantCatalog | null;
   perfumes: Perfume[];
+  costCatalog: PerfumeCost[];
   onConfirmOrder: (input: ConfirmOrderInput) => ConfirmOrderResult;
   syncing: boolean;
   lastSynced: string | null;
@@ -58,6 +70,7 @@ const STATUS_META: Record<
   no_match: { label: "No match", variant: "critical" },
   no_size: { label: "Pick size", variant: "low" },
   no_price: { label: "Size N/A", variant: "critical" },
+  custom: { label: "Custom", variant: "ok" },
 };
 
 // ── Searchable catalog picker (mirrors the QuickSaleForm combobox) ───────────
@@ -191,6 +204,7 @@ interface OrderItemRowProps {
   position: number;
   catalog: DecantCatalog;
   perfumes: Perfume[];
+  costIndex: CostIndex;
   onChange: (next: MatchedOrderItem) => void;
 }
 
@@ -199,9 +213,20 @@ function OrderItemRow({
   position,
   catalog,
   perfumes,
+  costIndex,
   onChange,
 }: OrderItemRowProps) {
   const meta = STATUS_META[item.status];
+  const pc =
+    item.chosen !== null
+      ? lookupCost(costIndex, item.chosen.brand, item.chosen.perfume)
+      : null;
+  const effMl = effectiveMl(item);
+  const profit =
+    item.unitPrice !== null && effMl !== null && effMl > 0
+      ? lineProfit(item.unitPrice, effMl, pc)
+      : null;
+  const isCustom = item.custom;
   const availableSizes = item.chosen
     ? DECANT_SIZES.filter((sz) => item.chosen!.prices[sz] !== undefined)
     : [];
@@ -212,6 +237,16 @@ function OrderItemRow({
   const pickSize = (size: DecantSize) => {
     if (item.chosen === null) return;
     onChange(recomputeItem(item, item.chosen, size, perfumes));
+  };
+  const enterCustom = () => {
+    // Seed with the current size (if any) so a matched line pre-fills its ml.
+    onChange(setCustomItem(item, item.customMl ?? item.size, item.unitPrice));
+  };
+  const changeCustomMl = (raw: string) => {
+    onChange(setCustomItem(item, raw === "" ? null : Number(raw), item.unitPrice));
+  };
+  const changeCustomPrice = (raw: string) => {
+    onChange(setCustomItem(item, item.customMl, raw === "" ? null : Number(raw)));
   };
   const clearMatch = () => {
     onChange(clearItemMatch(item));
@@ -238,33 +273,91 @@ function OrderItemRow({
           onSelect={pickEntry}
           onClear={clearMatch}
         />
-        <div className="flex items-center gap-1">
-          {availableSizes.length === 0 ? (
-            <span className="text-xs text-stone-400">no sizes</span>
-          ) : (
-            availableSizes.map((sz) => (
-              <button
-                key={sz}
-                type="button"
-                onClick={() => pickSize(sz)}
-                className={cn(
-                  "rounded-md border px-2 py-1 text-xs font-medium transition-colors",
-                  item.size === sz
-                    ? "border-amber-600 bg-amber-50 text-amber-800"
-                    : "border-stone-200 text-stone-600 hover:bg-stone-50",
-                )}
-              >
-                {sz}ml
-              </button>
-            ))
-          )}
+        <div className="flex flex-wrap items-center gap-1">
+          {availableSizes.map((sz) => (
+            <button
+              key={sz}
+              type="button"
+              onClick={() => pickSize(sz)}
+              className={cn(
+                "rounded-md border px-2 py-1 text-xs font-medium transition-colors",
+                item.size === sz && !isCustom
+                  ? "border-amber-600 bg-amber-50 text-amber-800"
+                  : "border-stone-200 text-stone-600 hover:bg-stone-50",
+              )}
+            >
+              {sz}ml
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={enterCustom}
+            title="Custom size & price for an unconventional order"
+            className={cn(
+              "rounded-md border px-2 py-1 text-xs font-medium transition-colors",
+              isCustom
+                ? "border-amber-600 bg-amber-50 text-amber-800"
+                : "border-dashed border-stone-300 text-stone-500 hover:bg-stone-50",
+            )}
+          >
+            Custom
+          </button>
         </div>
       </div>
+
+      {isCustom && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-100 bg-amber-50/50 px-2 py-1.5">
+          <label className="flex items-center gap-1 text-xs text-stone-500">
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              inputMode="decimal"
+              placeholder="ml"
+              value={item.customMl ?? ""}
+              onChange={(e) => changeCustomMl(e.target.value)}
+              className="h-8 w-20 rounded-md border border-stone-200 bg-white px-2 text-sm text-stone-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+              aria-label="Custom size in ml"
+            />
+            ml
+          </label>
+          <label className="flex items-center gap-1 text-xs text-stone-500">
+            ₹
+            <input
+              type="number"
+              min="0"
+              inputMode="decimal"
+              placeholder="price"
+              value={item.unitPrice ?? ""}
+              onChange={(e) => changeCustomPrice(e.target.value)}
+              className="h-8 w-24 rounded-md border border-stone-200 bg-white px-2 text-sm text-stone-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+              aria-label="Custom price in rupees"
+            />
+          </label>
+          <span className="text-[11px] text-stone-400">manual price</span>
+        </div>
+      )}
 
       <div className="mt-2 flex items-center justify-between text-xs">
         <span>
           {item.unitPrice !== null ? (
-            <span className="font-medium text-stone-800">₹{item.unitPrice}</span>
+            <>
+              <span className="font-medium text-stone-800">₹{item.unitPrice}</span>
+              {profit !== null ? (
+                <span
+                  className={cn(
+                    "ml-2 font-medium",
+                    profit >= 0 ? "text-emerald-600" : "text-red-600",
+                  )}
+                >
+                  · profit ₹{Math.round(profit)}
+                </span>
+              ) : (
+                <span className="ml-2 text-stone-400" title="No cost data for this perfume">
+                  · cost?
+                </span>
+              )}
+            </>
           ) : item.status === "no_price" ? (
             <span className="text-red-500">that size isn't offered</span>
           ) : item.status === "no_size" ? (
@@ -291,6 +384,7 @@ function OrderItemRow({
 export function OrderPage({
   catalog,
   perfumes,
+  costCatalog,
   onConfirmOrder,
   syncing,
   lastSynced,
@@ -313,23 +407,57 @@ export function OrderPage({
   const [customerAltPhone, setCustomerAltPhone] = useState("");
   const [weightStr, setWeightStr] = useState("");
   const [cod, setCod] = useState(false);
-  const [finalAmountStr, setFinalAmountStr] = useState("");
+  const [discountStr, setDiscountStr] = useState("");
+  const [deliveryStr, setDeliveryStr] = useState("100");
+
+  const discountPct = Math.max(0, Number(discountStr) || 0);
+  const deliveryCharge = Math.max(0, Number(deliveryStr) || 0);
 
   const boxes = useMemo(() => loadPrefs().boxes, []);
   const [boxId, setBoxId] = useState<string>(() => boxes[0]?.id ?? "");
 
-  const bill = useMemo(() => formatBill(items, showBrand), [items, showBrand]);
+  const bill = useMemo(
+    () => formatBill(items, showBrand, discountPct, deliveryCharge),
+    [items, showBrand, discountPct, deliveryCharge],
+  );
 
   // Billable = has a resolved size + price (tracked or not). These go on the order;
   // only the tracked ones also deduct stock.
   const billableItems = useMemo(
-    () => items.filter((it) => it.unitPrice !== null && it.size !== null),
+    () =>
+      items.filter((it) => {
+        const ml = effectiveMl(it);
+        return it.unitPrice !== null && ml !== null && ml > 0;
+      }),
     [items],
   );
   const billable = billableItems.length;
   const computedTotal = useMemo(
     () => billableItems.reduce((s, it) => s + (it.unitPrice as number), 0),
     [billableItems],
+  );
+
+  const costIndex = useMemo(() => buildCostIndex(costCatalog), [costCatalog]);
+
+  // Live order profit: revenue = subtotal − discount + delivery charge.
+  const revenue = useMemo(
+    () => computeChargedTotal(computedTotal, discountPct, deliveryCharge),
+    [computedTotal, discountPct, deliveryCharge],
+  );
+
+  const orderProfit = useMemo(
+    () =>
+      computeOrderProfit(
+        billableItems.map((it) => ({
+          unitPrice: it.unitPrice as number,
+          size: effectiveMl(it) as number,
+          pc: it.chosen
+            ? lookupCost(costIndex, it.chosen.brand, it.chosen.perfume)
+            : null,
+        })),
+        revenue,
+      ),
+    [billableItems, costIndex, revenue],
   );
 
   const resetCustomer = () => {
@@ -342,7 +470,8 @@ export function OrderPage({
     setCustomerAltPhone("");
     setWeightStr("");
     setCod(false);
-    setFinalAmountStr("");
+    setDiscountStr("");
+    setDeliveryStr("100");
   };
 
   const handleGenerate = () => {
@@ -392,21 +521,16 @@ export function OrderPage({
 
   const handleConfirm = () => {
     if (confirmed || billable === 0) return;
-    const orderItems = items
-      .filter((it) => it.unitPrice !== null && it.size !== null)
-      .map((it) => ({
-        perfumeId: it.linkedPerfumeId,
-        perfumeName: displayName(it),
-        brand: it.chosen?.brand ?? "",
-        size: it.size,
-        mlSold: it.size as number,
-        unitPrice: it.unitPrice as number,
-      }));
+    const orderItems = billableItems.map((it) => ({
+      perfumeId: it.linkedPerfumeId,
+      perfumeName: displayName(it),
+      brand: it.chosen?.brand ?? "",
+      size: it.size,
+      mlSold: effectiveMl(it) as number,
+      unitPrice: it.unitPrice as number,
+    }));
 
     const weight = weightStr.trim() === "" ? null : Number(weightStr);
-    const fa = finalAmountStr.trim() === "" ? null : Number(finalAmountStr);
-    const amountOverride =
-      fa !== null && Number.isFinite(fa) && fa !== computedTotal ? fa : null;
 
     onConfirmOrder({
       customerName,
@@ -419,7 +543,8 @@ export function OrderPage({
       weightG: weight !== null && Number.isFinite(weight) ? weight : null,
       boxId: boxId || null,
       paymentMode: cod ? "COD" : "Prepaid",
-      amountOverride,
+      discountPct,
+      deliveryCharge,
       items: orderItems,
     });
 
@@ -531,6 +656,32 @@ export function OrderPage({
                   {bill}
                 </pre>
 
+                {billable > 0 && (
+                  <div className="flex items-center justify-between rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-sm">
+                    <span className="text-stone-600">
+                      Est. profit
+                      <span className="ml-1 text-xs text-stone-400">
+                        (after ₹{25}/decant, ₹{70} delivery, ₹{10} packaging)
+                      </span>
+                    </span>
+                    <span className="text-right">
+                      <span
+                        className={cn(
+                          "font-semibold",
+                          orderProfit.profit >= 0 ? "text-emerald-700" : "text-red-600",
+                        )}
+                      >
+                        {formatCurrency(orderProfit.profit)}
+                      </span>
+                      {orderProfit.missingCost > 0 && (
+                        <span className="ml-2 text-xs text-amber-600">
+                          {orderProfit.missingCost} missing cost
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )}
+
                 <div className="space-y-2 rounded-lg border border-stone-100 bg-stone-50 p-3">
                   <p className="text-xs font-medium text-stone-500">
                     Customer & shipping{" "}
@@ -615,27 +766,46 @@ export function OrderPage({
                       aria-label="Weight in grams"
                     />
                   </div>
-                  <div className="flex items-center justify-between gap-2 pt-1">
-                    <label className="flex cursor-pointer items-center gap-2 text-xs text-stone-600 select-none">
-                      <input
-                        type="checkbox"
-                        checked={cod}
-                        onChange={(e) => setCod(e.target.checked)}
-                        className="size-3.5 accent-amber-700"
-                        aria-label="Cash on delivery"
-                      />
-                      COD {cod ? "" : "(default: Prepaid)"}
-                    </label>
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs text-stone-400">₹</span>
+                  <label className="flex cursor-pointer items-center gap-2 pt-1 text-xs text-stone-600 select-none">
+                    <input
+                      type="checkbox"
+                      checked={cod}
+                      onChange={(e) => setCod(e.target.checked)}
+                      className="size-3.5 accent-amber-700"
+                      aria-label="Cash on delivery"
+                    />
+                    COD {cod ? "" : "(default: Prepaid)"}
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label htmlFor="ord-discount" className="text-xs">
+                        Discount %
+                      </Label>
                       <Input
+                        id="ord-discount"
                         type="number"
                         min="0"
-                        value={finalAmountStr}
-                        onChange={(e) => setFinalAmountStr(e.target.value)}
-                        placeholder={`${computedTotal}`}
-                        className="h-9 w-24 text-sm"
-                        aria-label="Final amount override"
+                        max="100"
+                        value={discountStr}
+                        onChange={(e) => setDiscountStr(e.target.value)}
+                        placeholder="0"
+                        className="h-9 text-sm"
+                        aria-label="Discount percent"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="ord-delivery" className="text-xs">
+                        Delivery ₹
+                      </Label>
+                      <Input
+                        id="ord-delivery"
+                        type="number"
+                        min="0"
+                        value={deliveryStr}
+                        onChange={(e) => setDeliveryStr(e.target.value)}
+                        placeholder="100"
+                        className="h-9 text-sm"
+                        aria-label="Delivery charge"
                       />
                     </div>
                   </div>
@@ -717,6 +887,7 @@ export function OrderPage({
                   position={i + 1}
                   catalog={catalog}
                   perfumes={perfumes}
+                  costIndex={costIndex}
                   onChange={(next) => updateItem(i, next)}
                 />
               ))}

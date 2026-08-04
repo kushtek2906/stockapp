@@ -31,6 +31,7 @@ interface InventoryPageProps {
   onDeleteBrand: (brandId: string) => void;
   onEditPerfume: (perfumeId: string, input: EditPerfumeInput) => void;
   onDeletePerfume: (perfumeId: string) => void;
+  onSetStock: (perfumeId: string, stockMl: number) => void;
   onBulkImport: (payload: ImportPayload) => void;
   catalog: DecantCatalog | null;
   costSheetId: string;
@@ -53,6 +54,7 @@ export function InventoryPage({
   onDeleteBrand,
   onEditPerfume,
   onDeletePerfume,
+  onSetStock,
   onBulkImport,
   catalog,
   costSheetId,
@@ -143,6 +145,7 @@ export function InventoryPage({
             remainingMlMap={remainingMlMap}
             onEdit={onEditPerfume}
             onDelete={onDeletePerfume}
+            onSetStock={onSetStock}
           />
         </Tabs.Content>
 

@@ -2,6 +2,7 @@ import type {
   DecantCatalog,
   DecantCatalogEntry,
   DecantSize,
+  Order,
   Perfume,
 } from "../types";
 import {
@@ -18,7 +19,8 @@ export type MatchStatus =
   | "needs_confirm" // a plausible match the user should verify
   | "no_match" // nothing close in the catalog
   | "no_size" // matched, but no/invalid size given
-  | "no_price"; // matched + size, but that size isn't offered
+  | "no_price" // matched + size, but that size isn't offered
+  | "custom"; // user set a custom ml + price by hand
 
 export interface ParsedOrderLine {
   raw: string;
@@ -33,9 +35,47 @@ export interface MatchedOrderItem {
   chosen: DecantCatalogEntry | null;
   candidates: MatchCandidate[];
   size: DecantSize | null;
+  /** When true, this line ignores standard decant sizes: `customMl` holds the
+   * hand-entered volume and `unitPrice` the manually-entered price. */
+  custom: boolean;
+  customMl: number | null;
   unitPrice: number | null;
   linkedPerfumeId: string | null;
   inTrackedInventory: boolean;
+}
+
+/** The effective volume (ml) for a line — custom if in custom mode, else the standard size. */
+export function effectiveMl(item: MatchedOrderItem): number | null {
+  return item.custom ? item.customMl : item.size;
+}
+
+/** Discount amount (rounded) for a subtotal and a discount percentage. */
+export function discountAmount(subtotal: number, discountPct: number): number {
+  return Math.round((subtotal * discountPct) / 100);
+}
+
+/**
+ * Final amount charged to the customer: subtotal − discount + delivery. A legacy
+ * `amountOverride` (old orders) still wins if present.
+ */
+export function computeChargedTotal(
+  subtotal: number,
+  discountPct: number,
+  deliveryCharge: number,
+  amountOverride: number | null = null,
+): number {
+  if (amountOverride !== null) return amountOverride;
+  return subtotal - discountAmount(subtotal, discountPct) + deliveryCharge;
+}
+
+/** Charged total for a saved order (reads its discount / delivery / legacy override). */
+export function orderChargedTotal(order: Order): number {
+  return computeChargedTotal(
+    order.total,
+    order.discountPct ?? 0,
+    order.deliveryCharge ?? 0,
+    order.amountOverride ?? null,
+  );
 }
 
 /** Split pasted text into order lines, stripping list numbering and pulling the size. */
@@ -122,6 +162,8 @@ function buildItem(
     chosen,
     candidates,
     size,
+    custom: false,
+    customMl: null,
     unitPrice,
     linkedPerfumeId,
     inTrackedInventory: linkedPerfumeId !== null,
@@ -174,9 +216,32 @@ export function clearItemMatch(item: MatchedOrderItem): MatchedOrderItem {
     ...item,
     status: "no_match",
     chosen: null,
+    custom: false,
+    customMl: null,
     unitPrice: null,
     linkedPerfumeId: null,
     inTrackedInventory: false,
+  };
+}
+
+/**
+ * Put a line into custom mode with a hand-entered volume + price (for
+ * unconventional orders). Clears the standard size; keeps the matched perfume so
+ * profit still resolves. `ml`/`price` may be null while the user is typing.
+ */
+export function setCustomItem(
+  item: MatchedOrderItem,
+  ml: number | null,
+  price: number | null,
+): MatchedOrderItem {
+  const hasMl = ml !== null && Number.isFinite(ml) && ml > 0;
+  return {
+    ...item,
+    size: null,
+    custom: true,
+    customMl: ml,
+    unitPrice: price !== null && Number.isFinite(price) ? price : null,
+    status: hasMl ? "custom" : "no_size",
   };
 }
 
@@ -208,23 +273,41 @@ export function displayName(item: MatchedOrderItem): string {
  * brackets (e.g. "[French Avenue] Aromatix Frostbite (5ml)- 260").
  * Items without a resolved price are listed as `- ?` and excluded from the total.
  */
-export function formatBill(items: MatchedOrderItem[], showBrand = false): string {
+export function formatBill(
+  items: MatchedOrderItem[],
+  showBrand = false,
+  discountPct = 0,
+  deliveryCharge = 0,
+): string {
   const lines: string[] = [];
-  let total = 0;
+  let subtotal = 0;
   items.forEach((item, i) => {
     const base = displayName(item);
     const brand = item.chosen?.brand.trim() ?? "";
     const name = showBrand && brand !== "" ? `[${brand}] ${base}` : base;
-    const label = item.size !== null ? `${name} (${item.size}ml)` : name;
-    const sep = item.size !== null ? "- " : " - ";
+    const effMl = effectiveMl(item);
+    const label = effMl !== null ? `${name} (${effMl}ml)` : name;
+    const sep = effMl !== null ? "- " : " - ";
     if (item.unitPrice !== null) {
-      total += item.unitPrice;
+      subtotal += item.unitPrice;
       lines.push(`${i + 1}. ${label}${sep}${item.unitPrice}`);
     } else {
       lines.push(`${i + 1}. ${label}${sep}?`);
     }
   });
   lines.push("--------");
-  lines.push(`TOTAL - ${total}/-`);
+  // Only add the breakdown when there's a discount or delivery; otherwise keep
+  // the plain "TOTAL - X/-" format.
+  if (discountPct > 0 || deliveryCharge > 0) {
+    lines.push(`Subtotal - ${subtotal}`);
+    if (discountPct > 0) {
+      lines.push(`Discount (${discountPct}%) - -${discountAmount(subtotal, discountPct)}`);
+    }
+    if (deliveryCharge > 0) {
+      lines.push(`Delivery - ${deliveryCharge}`);
+    }
+  }
+  const finalTotal = computeChargedTotal(subtotal, discountPct, deliveryCharge);
+  lines.push(`TOTAL - ${finalTotal}/-`);
   return lines.join("\n");
 }

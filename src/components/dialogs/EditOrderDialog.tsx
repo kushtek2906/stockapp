@@ -3,6 +3,7 @@ import { Plus, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { EditOrderInput, OrderItemInput } from "../../hooks/useInventory";
 import { loadPrefs } from "../../lib/prefs";
+import { computeChargedTotal } from "../../lib/order";
 import { DECANT_SIZES, type Brand, type DecantSize, type Order, type Perfume } from "../../types";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -14,7 +15,8 @@ interface EditOrderDialogProps {
   order: Order;
   perfumes: Perfume[];
   brands: Brand[];
-  /** Returns false if it couldn't save (e.g. insufficient stock) — keep the dialog open. */
+  /** Saves the edited order; stock is adjusted (and may go negative). Returns
+   * true on success so the dialog closes — insufficient stock only warns. */
   onSave: (orderId: string, input: EditOrderInput) => boolean;
 }
 
@@ -48,7 +50,8 @@ export function EditOrderDialog({
   const [boxId, setBoxId] = useState("");
   const [weightStr, setWeightStr] = useState("");
   const [cod, setCod] = useState(false);
-  const [finalAmountStr, setFinalAmountStr] = useState("");
+  const [discountStr, setDiscountStr] = useState("");
+  const [deliveryStr, setDeliveryStr] = useState("100");
   const [lines, setLines] = useState<EditableLine[]>([]);
   const [addId, setAddId] = useState("");
 
@@ -72,7 +75,10 @@ export function EditOrderDialog({
       setBoxId(order.boxId ?? boxes[0]?.id ?? "");
       setWeightStr(order.weightG != null ? String(order.weightG) : "");
       setCod((order.paymentMode ?? "Prepaid") === "COD");
-      setFinalAmountStr(order.amountOverride != null ? String(order.amountOverride) : "");
+      setDiscountStr(order.discountPct ? String(order.discountPct) : "");
+      setDeliveryStr(
+        order.deliveryCharge != null ? String(order.deliveryCharge) : "100",
+      );
       setLines(
         order.items.map((i) => ({
           perfumeId: i.perfumeId,
@@ -109,6 +115,11 @@ export function EditOrderDialog({
   };
 
   const total = lines.reduce((sum, l) => sum + (Number(l.unitPrice) || 0), 0);
+  const chargedTotal = computeChargedTotal(
+    total,
+    Math.max(0, Number(discountStr) || 0),
+    Math.max(0, Number(deliveryStr) || 0),
+  );
 
   const handleSave = () => {
     const items: OrderItemInput[] = lines.map((l) => ({
@@ -119,8 +130,6 @@ export function EditOrderDialog({
       mlSold: Number(l.mlSold) || 0,
       unitPrice: Number(l.unitPrice) || 0,
     }));
-    const computed = items.reduce((s, i) => s + i.unitPrice, 0);
-    const fa = finalAmountStr.trim() === "" ? null : Number(finalAmountStr);
     const weight = weightStr.trim() === "" ? null : Number(weightStr);
     const ok = onSave(order.id, {
       customerName: name,
@@ -133,8 +142,8 @@ export function EditOrderDialog({
       weightG: weight !== null && Number.isFinite(weight) ? weight : null,
       boxId: boxId || null,
       paymentMode: cod ? "COD" : "Prepaid",
-      amountOverride:
-        fa !== null && Number.isFinite(fa) && fa !== computed ? fa : null,
+      discountPct: Math.max(0, Number(discountStr) || 0),
+      deliveryCharge: Math.max(0, Number(deliveryStr) || 0),
       items,
     });
     if (ok) onOpenChange(false);
@@ -226,8 +235,12 @@ export function EditOrderDialog({
                   COD (else Prepaid)
                 </label>
                 <div className="space-y-1">
-                  <Label htmlFor="eo-amount" className="text-xs">Final amount (₹, optional)</Label>
-                  <Input id="eo-amount" type="number" min="0" value={finalAmountStr} onChange={(e) => setFinalAmountStr(e.target.value)} placeholder={`${total}`} className="h-9 text-sm" />
+                  <Label htmlFor="eo-discount" className="text-xs">Discount %</Label>
+                  <Input id="eo-discount" type="number" min="0" max="100" value={discountStr} onChange={(e) => setDiscountStr(e.target.value)} placeholder="0" className="h-9 text-sm" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="eo-delivery" className="text-xs">Delivery ₹</Label>
+                  <Input id="eo-delivery" type="number" min="0" value={deliveryStr} onChange={(e) => setDeliveryStr(e.target.value)} placeholder="100" className="h-9 text-sm" />
                 </div>
               </div>
             </div>
@@ -311,7 +324,10 @@ export function EditOrderDialog({
 
           <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-4">
             <span className="text-sm text-stone-500">
-              Total: <span className="font-semibold text-stone-900">₹{total}</span>
+              Total: <span className="font-semibold text-stone-900">₹{chargedTotal}</span>
+              {chargedTotal !== total && (
+                <span className="ml-1 text-xs text-stone-400">(items ₹{total})</span>
+              )}
             </span>
             <div className="flex gap-2">
               <Dialog.Close asChild>

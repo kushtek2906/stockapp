@@ -17,6 +17,7 @@ import {
 import { Button } from "../components/ui/Button";
 import type { EditOrderInput } from "../hooks/useInventory";
 import { loadPrefs } from "../lib/prefs";
+import { orderChargedTotal } from "../lib/order";
 import { buildShipmentCsv, missingShippingFields } from "../lib/shipmentCsv";
 import { cn, formatCurrency, formatDateTime } from "../lib/utils";
 import type { Brand, Order, OrderLineRecord, Perfume } from "../types";
@@ -188,9 +189,21 @@ export function OrderHistoryPage({
                       </span>
                     )}
                   </div>
-                  <span className="font-medium text-stone-800">
-                    {formatCurrency(order.total)}
-                  </span>
+                  <div className="text-right">
+                    <span className="block font-medium text-stone-800">
+                      {formatCurrency(orderChargedTotal(order))}
+                    </span>
+                    {order.profit !== undefined && (
+                      <span
+                        className={cn(
+                          "block text-xs font-medium",
+                          order.profit >= 0 ? "text-emerald-600" : "text-red-600",
+                        )}
+                      >
+                        {formatCurrency(order.profit)} profit
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -225,6 +238,11 @@ export function OrderHistoryPage({
                           </button>
                           <span className="font-medium text-stone-700">
                             {formatCurrency(it.unitPrice)}
+                            {it.unitCost !== undefined && (
+                              <span className="ml-1 text-xs font-normal text-stone-400">
+                                cost {formatCurrency(it.unitCost)}
+                              </span>
+                            )}
                           </span>
                         </li>
                       ))}
@@ -290,6 +308,7 @@ export function OrderHistoryPage({
                 <th className="px-4 py-3 text-left font-medium text-stone-500">Customer</th>
                 <th className="px-4 py-3 text-left font-medium text-stone-500">Items</th>
                 <th className="px-4 py-3 text-left font-medium text-stone-500">Total</th>
+                <th className="px-4 py-3 text-left font-medium text-stone-500">Profit</th>
                 <th className="px-4 py-3 text-left font-medium text-stone-500">Actions</th>
               </tr>
             </thead>
@@ -346,7 +365,21 @@ export function OrderHistoryPage({
                         {order.items.length}
                       </td>
                       <td className="px-4 py-3 font-medium text-stone-800">
-                        {formatCurrency(order.total)}
+                        {formatCurrency(orderChargedTotal(order))}
+                      </td>
+                      <td className="px-4 py-3">
+                        {order.profit !== undefined ? (
+                          <span
+                            className={cn(
+                              "font-medium",
+                              order.profit >= 0 ? "text-emerald-600" : "text-red-600",
+                            )}
+                          >
+                            {formatCurrency(order.profit)}
+                          </span>
+                        ) : (
+                          <span className="text-stone-300">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         {isConfirming ? (
@@ -396,7 +429,7 @@ export function OrderHistoryPage({
                       <tr className="border-b border-stone-100 bg-stone-50/50 last:border-0">
                         <td />
                         <td />
-                        <td colSpan={5} className="px-4 py-3">
+                        <td colSpan={6} className="px-4 py-3">
                           {order.customerAddress !== "" && (
                             <p className="mb-2 text-xs text-stone-500">
                               <span className="text-stone-400">Address: </span>
@@ -421,6 +454,11 @@ export function OrderHistoryPage({
                                 </button>
                                 <span className="font-medium text-stone-700">
                                   {formatCurrency(it.unitPrice)}
+                                  {it.unitCost !== undefined && (
+                                    <span className="ml-1 text-xs font-normal text-stone-400">
+                                      cost {formatCurrency(it.unitCost)}
+                                    </span>
+                                  )}
                                 </span>
                               </li>
                             ))}

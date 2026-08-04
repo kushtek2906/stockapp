@@ -165,7 +165,7 @@ export function AddPerfumeDialog({
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="pfm-ml">Total ML</Label>
+                <Label htmlFor="pfm-ml">Bottle size (ml)</Label>
                 <Input
                   id="pfm-ml"
                   type="number"

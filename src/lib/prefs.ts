@@ -13,6 +13,10 @@ interface AppPrefs {
   /** Google Sheet (price-revision tab) used as the source of cost prices. */
   costSheetId: string;
   costSheetGid: string;
+  /** Internal "30ml prices" tab — 30ml is hidden on the customer sheet, so it's
+   * merged into the catalog live from here. */
+  prices30SheetId: string;
+  prices30Gid: string;
   /** Competitor's public Google Sheet used for price comparison. */
   competitorSheetId: string;
   competitorSheetGid: string;
@@ -36,6 +40,8 @@ const DEFAULT_PREFS: AppPrefs = {
   sheetGid: "2087866095",
   costSheetId: "14w0zPCEXrmvTpKb4dNNf5AZ64ADb08eMW0eDFuj0wbo",
   costSheetGid: "1021089370",
+  prices30SheetId: "14w0zPCEXrmvTpKb4dNNf5AZ64ADb08eMW0eDFuj0wbo",
+  prices30Gid: "884879316",
   competitorSheetId: "118f-ZLbawdsi38eDv9TqV7pq-yxjaHPdunruCwuerb8",
   competitorSheetGid: "0",
   boxes: DEFAULT_BOXES,

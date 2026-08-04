@@ -10,40 +10,30 @@ interface EditQuantityDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   perfume: Perfume;
-  remainingMl: number;
-  /** Persist the new total stock quantity (ml) for this perfume. */
-  onSave: (totalMl: number) => void;
+  /** Persist the new current stock (ml) for this perfume — set absolutely. */
+  onSave: (stockMl: number) => void;
 }
 
 export function EditQuantityDialog({
   open,
   onOpenChange,
   perfume,
-  remainingMl,
   onSave,
 }: EditQuantityDialogProps) {
-  const [value, setValue] = useState(String(perfume.totalMl));
+  const [value, setValue] = useState(String(perfume.stockMl));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
-      setValue(String(perfume.totalMl));
+      setValue(String(perfume.stockMl));
       setError(null);
     }
   }, [open, perfume]);
 
-  const soldMl = Math.max(0, perfume.totalMl - remainingMl);
-
   const handleSave = () => {
     const num = Number(value);
-    if (!Number.isFinite(num) || num < 0) {
-      setError("Enter a quantity of 0 or more.");
-      return;
-    }
-    if (num < soldMl) {
-      setError(
-        `At least ${soldMl} ml already sold — quantity can't be below that.`,
-      );
+    if (value.trim() === "" || !Number.isFinite(num)) {
+      setError("Enter a number.");
       return;
     }
     onSave(num);
@@ -58,7 +48,7 @@ export function EditQuantityDialog({
           <div className="mb-5 flex items-start justify-between">
             <div>
               <Dialog.Title className="text-base font-semibold text-stone-900">
-                Set Stock Quantity
+                Set Current Stock
               </Dialog.Title>
               <Dialog.Description className="mt-0.5 text-sm text-stone-500">
                 <span className="font-medium">{perfume.name}</span> ·{" "}
@@ -76,11 +66,10 @@ export function EditQuantityDialog({
 
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label htmlFor="qty-ml">Total stock (ml)</Label>
+              <Label htmlFor="qty-ml">Current stock (ml)</Label>
               <Input
                 id="qty-ml"
                 type="number"
-                min="0"
                 step="1"
                 autoFocus
                 value={value}
@@ -94,12 +83,10 @@ export function EditQuantityDialog({
                   {error}
                 </p>
               )}
-              {soldMl > 0 && (
-                <p className="text-xs text-stone-400">
-                  {soldMl} ml already sold · remaining shown in the table is
-                  total minus sold.
-                </p>
-              )}
+              <p className="text-xs text-stone-400">
+                This is the exact amount you have now — it replaces the current
+                value. Sales adjust it from here.
+              </p>
             </div>
           </div>
 

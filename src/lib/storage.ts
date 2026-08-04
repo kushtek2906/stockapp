@@ -1,7 +1,18 @@
-import type { Brand, InventoryStore, Perfume } from "../types";
+import type { Brand, InventoryStore, PerfumeCost, Perfume } from "../types";
+import costCatalogSeed from "../data/costCatalog.seed.json";
+import {
+  buildCostIndex,
+  decantPerfumeCost,
+  lookupCost,
+  orderProfitFromItems,
+} from "./profit";
 
 const STORAGE_KEY_V2 = "perfume_inventory_v2";
 const STORAGE_KEY_V1 = "perfume_inventory_v1";
+
+/** Bottle cost + size per perfume, generated from the cost PDF + master sheets.
+ * Seeds `costCatalog` on first run; editable in-app thereafter. */
+const COST_CATALOG_SEED = costCatalogSeed as PerfumeCost[];
 
 const SEED_DATA: InventoryStore = {
   brands: [
@@ -15,6 +26,7 @@ const SEED_DATA: InventoryStore = {
       brandId: "brand-001",
       name: "Replica Beach Walk",
       totalMl: 100,
+      stockMl: 70, // 100 purchased − 30 sold in seed sales
       costPrice: 4500,
       purchaseDate: "2026-01-15",
     },
@@ -24,6 +36,7 @@ const SEED_DATA: InventoryStore = {
       brandId: "brand-001",
       name: "Replica Flower Market",
       totalMl: 50,
+      stockMl: 45, // 50 − 5
       costPrice: 3200,
       purchaseDate: "2026-02-10",
     },
@@ -33,6 +46,7 @@ const SEED_DATA: InventoryStore = {
       brandId: "brand-002",
       name: "Bal d'Afrique",
       totalMl: 100,
+      stockMl: 85, // 100 − 15
       costPrice: 5800,
       purchaseDate: "2026-03-01",
     },
@@ -42,6 +56,7 @@ const SEED_DATA: InventoryStore = {
       brandId: "brand-002",
       name: "Mojave Ghost",
       totalMl: 30,
+      stockMl: 22, // 30 − 8
       costPrice: 4100,
       purchaseDate: "2026-04-01",
     },
@@ -85,22 +100,63 @@ const SEED_DATA: InventoryStore = {
   ],
   orders: [],
   auditLog: [],
+  costCatalog: COST_CATALOG_SEED,
 };
 
 /**
  * Guarantee every array field exists. Older stores (saved before `orders` was
  * added, or partial data) won't have every key — default them so the app doesn't
  * crash on `store.orders.map(...)` etc.
+ *
+ * Also backfills `stockMl` on perfumes saved before current stock was stored
+ * directly: for those, current stock was `totalMl − Σ mlSold`, so we bake that
+ * in once. Unclamped, so any pre-existing oversell is preserved. Idempotent —
+ * only perfumes still missing `stockMl` are touched.
+ *
+ * And backfills `profit` on past orders (placed before profit tracking): each
+ * line's cost is looked up from the cost catalog and the net order profit is
+ * computed. Idempotent — only orders still missing `profit` are touched.
  */
 export function normalizeStore(
   raw: Partial<InventoryStore> | null | undefined,
 ): InventoryStore {
+  const perfumes = raw?.perfumes ?? [];
+  const sales = raw?.sales ?? [];
+  const costCatalog = raw?.costCatalog ?? COST_CATALOG_SEED;
+
+  const migratedPerfumes = perfumes.map((p) => {
+    if (typeof p.stockMl === "number") return p;
+    const sold = sales
+      .filter((s) => s.perfumeId === p.perfumeId)
+      .reduce((sum, s) => sum + s.mlSold, 0);
+    return { ...p, stockMl: p.totalMl - sold };
+  });
+
+  const costIndex = buildCostIndex(costCatalog);
+  const orders = (raw?.orders ?? []).map((order) => {
+    if (typeof order.profit === "number") return order;
+    const items = order.items.map((it) => {
+      if (it.unitCost !== undefined) return it;
+      const ml = it.size ?? it.mlSold;
+      const pc = lookupCost(costIndex, it.brand, it.perfumeName);
+      return {
+        ...it,
+        unitCost: pc !== null && ml > 0 ? decantPerfumeCost(pc, ml) : undefined,
+      };
+    });
+    const revenue = order.amountOverride ?? order.total;
+    return { ...order, items, profit: orderProfitFromItems(items, revenue) };
+  });
+
   return {
     brands: raw?.brands ?? [],
-    perfumes: raw?.perfumes ?? [],
-    sales: raw?.sales ?? [],
-    orders: raw?.orders ?? [],
+    perfumes: migratedPerfumes,
+    sales,
+    orders,
     auditLog: raw?.auditLog ?? [],
+    // Seed the cost catalog only when the field is truly absent (first run or a
+    // pre-cost-catalog store). An explicit empty array (user cleared it) is kept.
+    costCatalog,
   };
 }
 
@@ -152,6 +208,11 @@ function migrateV1(raw: string): InventoryStore {
     return { brandId: b.brandId, brandCode: attempt, name: b.name };
   });
 
+  const soldByPerfume: Record<string, number> = {};
+  for (const s of v1.sales) {
+    soldByPerfume[s.perfumeId] = (soldByPerfume[s.perfumeId] ?? 0) + s.mlSold;
+  }
+
   const serialMap: Record<string, number> = {};
   const perfumes: Perfume[] = v1.perfumes.map((p) => {
     const brandCode = brandCodeMap[p.brandId] ?? "UNK";
@@ -163,6 +224,7 @@ function migrateV1(raw: string): InventoryStore {
       brandId: p.brandId,
       name: p.name,
       totalMl: p.totalMl,
+      stockMl: p.totalMl - (soldByPerfume[p.perfumeId] ?? 0),
       costPrice: p.costPrice,
       purchaseDate: p.purchaseDate,
     };
@@ -174,6 +236,7 @@ function migrateV1(raw: string): InventoryStore {
     sales: v1.sales,
     orders: [],
     auditLog: [],
+    costCatalog: COST_CATALOG_SEED,
   };
 }
 

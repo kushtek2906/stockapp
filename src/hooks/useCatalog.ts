@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { loadPrefs, savePrefs } from "../lib/prefs";
-import { fetchCatalog, loadCachedCatalog, saveCatalog } from "../lib/sheet";
+import {
+  fetch30mlPrices,
+  fetchCatalog,
+  loadCachedCatalog,
+  saveCatalog,
+} from "../lib/sheet";
+import { normalizeName } from "../lib/normalize";
 import type { DecantCatalog } from "../types";
 
 /**
@@ -26,6 +32,20 @@ export function useCatalog() {
       setError(null);
       try {
         const fresh = await fetchCatalog(id, g);
+        // Merge 30ml prices (hidden on the customer sheet) from the internal tab.
+        const prefs = loadPrefs();
+        const prices30 = await fetch30mlPrices(
+          prefs.prices30SheetId,
+          prefs.prices30Gid,
+        );
+        if (prices30.size > 0) {
+          for (const entry of fresh.entries) {
+            const price = prices30.get(
+              normalizeName(`${entry.brand} ${entry.perfume}`),
+            );
+            if (price !== undefined) entry.prices[30] = price;
+          }
+        }
         setCatalog(fresh);
         saveCatalog(fresh);
         return true;

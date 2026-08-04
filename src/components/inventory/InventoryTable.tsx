@@ -21,6 +21,7 @@ interface InventoryTableProps {
   remainingMlMap: Record<string, number>;
   onEdit: (perfumeId: string, input: EditPerfumeInput) => void;
   onDelete: (perfumeId: string) => void;
+  onSetStock: (perfumeId: string, stockMl: number) => void;
 }
 
 const STATUS_BADGE_VARIANT = {
@@ -48,6 +49,7 @@ export function InventoryTable({
   remainingMlMap,
   onEdit,
   onDelete,
+  onSetStock,
 }: InventoryTableProps) {
   const [query, setQuery] = useState("");
   const [editTarget, setEditTarget] = useState<Perfume | null>(null);
@@ -147,7 +149,6 @@ export function InventoryTable({
                     className="rounded px-1 py-0.5 text-stone-700 hover:bg-amber-50 hover:text-amber-800"
                   >
                     {remaining.toFixed(1)} ml
-                    <span className="ml-1 text-xs text-stone-400">/ {p.totalMl} ml</span>
                   </button>
                   <span className="text-stone-600">{formatCurrency(p.costPrice)}</span>
                 </div>
@@ -279,9 +280,6 @@ export function InventoryTable({
                         className="rounded px-1 py-0.5 text-left hover:bg-amber-50 hover:text-amber-800"
                       >
                         {remaining.toFixed(1)} ml
-                        <span className="ml-1 text-xs text-stone-400">
-                          / {p.totalMl} ml
-                        </span>
                       </button>
                     </td>
                     <td className="px-4 py-3">
@@ -375,15 +373,8 @@ export function InventoryTable({
             if (!o) setQtyTarget(null);
           }}
           perfume={qtyTarget}
-          remainingMl={remainingMlMap[qtyTarget.perfumeId] ?? 0}
-          onSave={(totalMl) => {
-            onEdit(qtyTarget.perfumeId, {
-              name: qtyTarget.name,
-              totalMl,
-              costPrice: qtyTarget.costPrice,
-              purchaseDate: qtyTarget.purchaseDate,
-              imageUrl: qtyTarget.imageUrl,
-            });
+          onSave={(stockMl) => {
+            onSetStock(qtyTarget.perfumeId, stockMl);
             setQtyTarget(null);
           }}
         />

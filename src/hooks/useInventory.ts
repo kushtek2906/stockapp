@@ -4,7 +4,14 @@ import { loadStore } from "../lib/storage";
 import { loadInventory, saveInventory } from "../lib/remoteStore";
 import type { ImportPayload } from "../lib/importSchema";
 import { normalizeName } from "../lib/normalize";
-import { computeRemainingMl, nextPerfumeCode, today } from "../lib/utils";
+import { computeChargedTotal } from "../lib/order";
+import { nextPerfumeCode, today } from "../lib/utils";
+import {
+  buildCostIndex,
+  decantPerfumeCost,
+  lookupCost,
+  orderProfitFromItems,
+} from "../lib/profit";
 import type {
   AuditAction,
   AuditEntry,
@@ -16,8 +23,10 @@ import type {
   OrderLineRecord,
   PaymentMode,
   Perfume,
+  PerfumeCost,
   Sale,
 } from "../types";
+
 
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
@@ -100,7 +109,10 @@ export interface OrderDetailsInput {
   weightG: number | null;
   boxId: string | null;
   paymentMode: PaymentMode;
-  amountOverride: number | null;
+  /** Percentage discount on the line-item subtotal, applied before delivery. */
+  discountPct: number;
+  /** Flat delivery charge added after the discount. */
+  deliveryCharge: number;
 }
 
 export interface ConfirmOrderInput extends OrderDetailsInput {
@@ -109,7 +121,8 @@ export interface ConfirmOrderInput extends OrderDetailsInput {
 
 export interface ConfirmOrderResult {
   applied: number;
-  failed: number;
+  /** Tracked lines whose deduction pushed stock negative (still applied). */
+  oversold: number;
   skippedNoInv: number;
 }
 
@@ -151,25 +164,36 @@ export function useInventory() {
     saveInventory(next);
   }, []);
 
+  // Current stock is stored directly on each perfume now (mutable, may be
+  // negative). The map is just a lookup over that stored value.
   const remainingMlMap = useMemo<Record<string, number>>(() => {
     const map: Record<string, number> = {};
     for (const p of store.perfumes) {
-      map[p.perfumeId] = computeRemainingMl(p.totalMl, p.perfumeId, store.sales);
+      map[p.perfumeId] = p.stockMl;
     }
     return map;
-  }, [store.perfumes, store.sales]);
+  }, [store.perfumes]);
 
-  const totalStockValue = useMemo<number>(() => {
-    return store.perfumes.reduce((sum, p) => {
-      const remaining = remainingMlMap[p.perfumeId] ?? 0;
-      const costPerMl = p.totalMl > 0 ? p.costPrice / p.totalMl : 0;
-      return sum + remaining * costPerMl;
-    }, 0);
-  }, [store.perfumes, remainingMlMap]);
+  // Total money invested to date — the sum of every perfume's cost price. Does
+  // NOT shrink as stock is sold (that's what "Total Revenue" tracks instead).
+  const totalInvestment = useMemo<number>(() => {
+    return store.perfumes.reduce((sum, p) => sum + p.costPrice, 0);
+  }, [store.perfumes]);
+
+  // "Perfumes purchased" metric — count of products and total ml ever bought.
+  const totalPurchasedCount = store.perfumes.length;
+  const totalPurchasedMl = useMemo<number>(() => {
+    return store.perfumes.reduce((sum, p) => sum + p.totalMl, 0);
+  }, [store.perfumes]);
 
   const totalRevenue = useMemo<number>(() => {
     return store.sales.reduce((sum, s) => sum + s.totalPrice, 0);
   }, [store.sales]);
+
+  // Total profit across all orders (backfilled for past orders on load).
+  const totalProfit = useMemo<number>(() => {
+    return store.orders.reduce((sum, o) => sum + (o.profit ?? 0), 0);
+  }, [store.orders]);
 
   // ── Brand mutations ──────────────────────────────────────────────────────────
 
@@ -301,6 +325,7 @@ export function useInventory() {
         brandId: input.brandId,
         name: input.name.trim(),
         totalMl: input.totalMl,
+        stockMl: input.totalMl, // buy X ml → X ml in stock
         costPrice: input.costPrice,
         purchaseDate: input.purchaseDate,
         imageUrl: input.imageUrl,
@@ -383,6 +408,33 @@ export function useInventory() {
     [store, persist],
   );
 
+  /** Set a perfume's current stock to an absolute value (any finite number,
+   * including negative). This overwrites stock outright — it does not subtract
+   * past sales. */
+  const setPerfumeStock = useCallback(
+    (perfumeId: string, stockMl: number): void => {
+      const perfume = store.perfumes.find((p) => p.perfumeId === perfumeId);
+      if (perfume === undefined) return;
+
+      const updatedPerfumes = store.perfumes.map((p) =>
+        p.perfumeId === perfumeId ? { ...p, stockMl } : p,
+      );
+      const entry = makeAuditEntry(
+        "edit",
+        "perfume",
+        perfumeId,
+        `Set stock for "${perfume.name}" (${perfume.perfumeCode}): ${perfume.stockMl} ml → ${stockMl} ml`,
+      );
+      persist({
+        ...store,
+        perfumes: updatedPerfumes,
+        auditLog: [...store.auditLog, entry],
+      });
+      toast.success(`Stock set to ${stockMl} ml for ${perfume.name}.`);
+    },
+    [store, persist],
+  );
+
   const deletePerfume = useCallback(
     (perfumeId: string): void => {
       const perfume = store.perfumes.find((p) => p.perfumeId === perfumeId);
@@ -416,13 +468,10 @@ export function useInventory() {
 
   const recordSale = useCallback(
     (input: RecordSaleInput): boolean => {
-      const remaining = remainingMlMap[input.perfumeId] ?? 0;
-      if (input.mlSold > remaining) {
-        toast.error(
-          `Not enough stock. Only ${remaining.toFixed(1)} ml remaining.`,
-        );
-        return false;
-      }
+      const perfume = store.perfumes.find(
+        (p) => p.perfumeId === input.perfumeId,
+      );
+      const remaining = perfume?.stockMl ?? 0;
 
       const sale: Sale = {
         id: generateId("sale"),
@@ -432,9 +481,6 @@ export function useInventory() {
         totalPrice: input.totalPrice,
       };
 
-      const perfume = store.perfumes.find(
-        (p) => p.perfumeId === input.perfumeId,
-      );
       const perfumeName = perfume?.name ?? "Perfume";
       const perfumeCode = perfume?.perfumeCode ?? input.perfumeId;
 
@@ -445,17 +491,28 @@ export function useInventory() {
         `Recorded sale: ${input.mlSold} ml of "${perfumeName}" (${perfumeCode}) @ ₹${input.totalPrice}`,
       );
 
-      const nextStore = {
+      // Decrement the perfume's stored stock (may go negative — that's fine).
+      const updatedPerfumes = store.perfumes.map((p) =>
+        p.perfumeId === input.perfumeId
+          ? { ...p, stockMl: p.stockMl - input.mlSold }
+          : p,
+      );
+
+      persist({
         ...store,
+        perfumes: updatedPerfumes,
         sales: [...store.sales, sale],
         auditLog: [...store.auditLog, entry],
-      };
-      persist(nextStore);
+      });
 
       const afterRemaining = remaining - input.mlSold;
       toast.success(`Sale recorded — ${input.mlSold} ml of ${perfumeName}.`);
 
-      if (afterRemaining < 10) {
+      if (afterRemaining < 0) {
+        toast.warning(
+          `${perfumeName} is now oversold (${afterRemaining.toFixed(1)} ml). Update stock when you restock.`,
+        );
+      } else if (afterRemaining < 10) {
         toast.warning(
           `Critical: ${perfumeName} is below 10 ml (${afterRemaining.toFixed(1)} ml left).`,
         );
@@ -467,7 +524,7 @@ export function useInventory() {
 
       return true;
     },
-    [store, persist, remainingMlMap],
+    [store, persist],
   );
 
   const editSale = useCallback(
@@ -476,20 +533,20 @@ export function useInventory() {
       if (sale === undefined) return;
 
       const perfume = store.perfumes.find((p) => p.perfumeId === sale.perfumeId);
-      const remainingWithoutThis =
-        (remainingMlMap[sale.perfumeId] ?? 0) + sale.mlSold;
-
-      if (input.mlSold > remainingWithoutThis) {
-        toast.error(
-          `Cannot set ${input.mlSold} ml — only ${remainingWithoutThis.toFixed(1)} ml available for this perfume.`,
-        );
-        return;
-      }
 
       const updatedSales = store.sales.map((s) =>
         s.id === saleId
           ? { ...s, mlSold: input.mlSold, totalPrice: input.totalPrice }
           : s,
+      );
+
+      // Adjust stock by the delta: selling less returns ml, selling more takes
+      // more. No cap — stock may go negative.
+      const delta = sale.mlSold - input.mlSold;
+      const updatedPerfumes = store.perfumes.map((p) =>
+        p.perfumeId === sale.perfumeId
+          ? { ...p, stockMl: p.stockMl + delta }
+          : p,
       );
 
       const perfumeName = perfume?.name ?? "Perfume";
@@ -501,12 +558,13 @@ export function useInventory() {
       );
       persist({
         ...store,
+        perfumes: updatedPerfumes,
         sales: updatedSales,
         auditLog: [...store.auditLog, entry],
       });
       toast.success("Sale updated.");
     },
-    [store, persist, remainingMlMap],
+    [store, persist],
   );
 
   const deleteSale = useCallback(
@@ -517,6 +575,13 @@ export function useInventory() {
       const perfume = store.perfumes.find((p) => p.perfumeId === sale.perfumeId);
       const perfumeName = perfume?.name ?? "Perfume";
 
+      // Deleting a sale returns its ml to stock.
+      const updatedPerfumes = store.perfumes.map((p) =>
+        p.perfumeId === sale.perfumeId
+          ? { ...p, stockMl: p.stockMl + sale.mlSold }
+          : p,
+      );
+
       const entry = makeAuditEntry(
         "delete",
         "sale",
@@ -525,6 +590,7 @@ export function useInventory() {
       );
       persist({
         ...store,
+        perfumes: updatedPerfumes,
         sales: store.sales.filter((s) => s.id !== saleId),
         auditLog: [...store.auditLog, entry],
       });
@@ -566,6 +632,7 @@ export function useInventory() {
           brandId: brand.brandId,
           name: p.name.trim(),
           totalMl: p.totalMl,
+          stockMl: p.totalMl,
           costPrice: p.costPrice,
           purchaseDate: p.purchaseDate,
         };
@@ -659,6 +726,7 @@ export function useInventory() {
           brandId: brand.brandId,
           name: item.name.trim(),
           totalMl: 0,
+          stockMl: 0,
           costPrice: item.costPrice ?? 0,
           purchaseDate: today(),
         });
@@ -691,6 +759,50 @@ export function useInventory() {
     [store, persist],
   );
 
+  // ── Cost catalog (bottle cost + size per perfume, powers order profit) ───────
+
+  const upsertCost = useCallback(
+    (
+      originalKey: string | null,
+      input: { brand: string; perfume: string; bottleCost: number; bottleMl: number },
+    ): void => {
+      const key = normalizeName(`${input.brand} ${input.perfume}`);
+      if (key === "") {
+        toast.error("Enter a brand and perfume name.");
+        return;
+      }
+      const entry: PerfumeCost = {
+        key,
+        brand: input.brand.trim(),
+        perfume: input.perfume.trim(),
+        bottleCost: input.bottleCost,
+        bottleMl: input.bottleMl,
+      };
+      // Drop the row being edited (originalKey) and any existing row with the new
+      // key, then append — so a rename can't create a duplicate.
+      const costCatalog = [
+        ...store.costCatalog.filter(
+          (c) => c.key !== key && c.key !== originalKey,
+        ),
+        entry,
+      ];
+      persist({ ...store, costCatalog });
+      toast.success(`Cost saved for ${entry.perfume}.`);
+    },
+    [store, persist],
+  );
+
+  const deleteCost = useCallback(
+    (key: string): void => {
+      persist({
+        ...store,
+        costCatalog: store.costCatalog.filter((c) => c.key !== key),
+      });
+      toast.success("Cost entry removed.");
+    },
+    [store, persist],
+  );
+
   const clearAllInventory = useCallback((): void => {
     const removed = {
       brands: store.brands.length,
@@ -709,6 +821,7 @@ export function useInventory() {
       sales: [],
       orders: [],
       auditLog: [...store.auditLog, entry],
+      costCatalog: store.costCatalog, // keep the cost reference intact
     });
     toast.success("Inventory cleared — all brands, perfumes, and sales removed.");
   }, [store, persist]);
@@ -719,11 +832,14 @@ export function useInventory() {
     (input: ConfirmOrderInput): ConfirmOrderResult => {
       const sales = [...store.sales];
       const auditLog = [...store.auditLog];
-      const remainingLocal: Record<string, number> = { ...remainingMlMap };
+      // Track stock locally so multiple lines for the same perfume stack.
+      const stockLocal: Record<string, number> = {};
+      for (const p of store.perfumes) stockLocal[p.perfumeId] = p.stockMl;
 
+      const costIndex = buildCostIndex(store.costCatalog);
       const items: OrderLineRecord[] = [];
       let applied = 0;
-      let failed = 0;
+      let oversold = 0;
       let skippedNoInv = 0;
 
       for (const it of input.items) {
@@ -731,23 +847,23 @@ export function useInventory() {
         if (it.perfumeId === null) {
           skippedNoInv += 1;
         } else {
-          const rem = remainingLocal[it.perfumeId] ?? 0;
-          if (it.mlSold > rem) {
-            failed += 1;
-          } else {
-            const sale: Sale = {
-              id: generateId("sale"),
-              perfumeId: it.perfumeId,
-              mlSold: it.mlSold,
-              date: today(),
-              totalPrice: it.unitPrice,
-            };
-            sales.push(sale);
-            remainingLocal[it.perfumeId] = rem - it.mlSold;
-            saleId = sale.id;
-            applied += 1;
-          }
+          // Always deduct — never block. Stock may go negative.
+          const rem = stockLocal[it.perfumeId] ?? 0;
+          if (it.mlSold > rem) oversold += 1;
+          const sale: Sale = {
+            id: generateId("sale"),
+            perfumeId: it.perfumeId,
+            mlSold: it.mlSold,
+            date: today(),
+            totalPrice: it.unitPrice,
+          };
+          sales.push(sale);
+          stockLocal[it.perfumeId] = rem - it.mlSold;
+          saleId = sale.id;
+          applied += 1;
         }
+        const pc =
+          it.mlSold > 0 ? lookupCost(costIndex, it.brand, it.perfumeName) : null;
         items.push({
           perfumeId: it.perfumeId,
           perfumeName: it.perfumeName,
@@ -755,11 +871,26 @@ export function useInventory() {
           size: it.size,
           mlSold: it.mlSold,
           unitPrice: it.unitPrice,
+          unitCost:
+            pc !== null && it.mlSold > 0
+              ? decantPerfumeCost(pc, it.mlSold)
+              : undefined,
           saleId,
         });
       }
 
+      const updatedPerfumes = store.perfumes.map((p) => ({
+        ...p,
+        stockMl: stockLocal[p.perfumeId] ?? p.stockMl,
+      }));
+
       const total = items.reduce((sum, i) => sum + i.unitPrice, 0);
+      const revenue = computeChargedTotal(
+        total,
+        input.discountPct,
+        input.deliveryCharge,
+      );
+      const profit = orderProfitFromItems(items, revenue);
       const nextSeq =
         store.orders.reduce((max, o) => Math.max(max, o.seq ?? 0), 0) + 1;
       const order: Order = {
@@ -776,18 +907,21 @@ export function useInventory() {
         weightG: input.weightG,
         boxId: input.boxId,
         paymentMode: input.paymentMode,
-        amountOverride: input.amountOverride,
+        discountPct: input.discountPct,
+        deliveryCharge: input.deliveryCharge,
         items,
         total,
+        profit,
       };
       const entry = makeAuditEntry(
         "create",
         "sale",
         order.id,
-        `Order${order.customerName !== "" ? ` for ${order.customerName}` : ""}: ${applied} item(s) deducted, ₹${total} total`,
+        `Order${order.customerName !== "" ? ` for ${order.customerName}` : ""}: ${applied} item(s) deducted, ₹${total} total, ₹${Math.round(profit)} profit`,
       );
       persist({
         ...store,
+        perfumes: updatedPerfumes,
         sales,
         orders: [...store.orders, order],
         auditLog: [...auditLog, entry],
@@ -801,14 +935,14 @@ export function useInventory() {
           `${skippedNoInv} item${skippedNoInv !== 1 ? "s" : ""} billed but not in tracked inventory.`,
         );
       }
-      if (failed > 0) {
+      if (oversold > 0) {
         toast.warning(
-          `${failed} item${failed !== 1 ? "s" : ""} couldn't be deducted (insufficient stock).`,
+          `${oversold} item${oversold !== 1 ? "s" : ""} pushed stock negative — deducted anyway.`,
         );
       }
-      return { applied, failed, skippedNoInv };
+      return { applied, oversold, skippedNoInv };
     },
-    [store, persist, remainingMlMap],
+    [store, persist],
   );
 
   const deleteOrder = useCallback(
@@ -819,6 +953,21 @@ export function useInventory() {
       const saleIds = new Set(
         order.items.map((i) => i.saleId).filter((id): id is string => id !== null),
       );
+
+      // Return each deducted line's ml back to its perfume's stock.
+      const restoreByPerfume: Record<string, number> = {};
+      for (const s of store.sales) {
+        if (saleIds.has(s.id)) {
+          restoreByPerfume[s.perfumeId] =
+            (restoreByPerfume[s.perfumeId] ?? 0) + s.mlSold;
+        }
+      }
+      const updatedPerfumes = store.perfumes.map((p) =>
+        restoreByPerfume[p.perfumeId] !== undefined
+          ? { ...p, stockMl: p.stockMl + restoreByPerfume[p.perfumeId] }
+          : p,
+      );
+
       const entry = makeAuditEntry(
         "delete",
         "sale",
@@ -827,6 +976,7 @@ export function useInventory() {
       );
       persist({
         ...store,
+        perfumes: updatedPerfumes,
         sales: store.sales.filter((s) => !saleIds.has(s.id)),
         orders: store.orders.filter((o) => o.id !== orderId),
         auditLog: [...store.auditLog, entry],
@@ -841,28 +991,30 @@ export function useInventory() {
       const order = store.orders.find((o) => o.id === orderId);
       if (order === undefined) return false;
 
-      // Revert: drop this order's existing sales, then recompute remaining.
+      // Revert this order's existing sales, adding their ml back to stock.
       const oldSaleIds = new Set(
         order.items.map((i) => i.saleId).filter((id): id is string => id !== null),
       );
       let sales = store.sales.filter((s) => !oldSaleIds.has(s.id));
-      const remaining: Record<string, number> = {};
-      for (const p of store.perfumes) {
-        remaining[p.perfumeId] = computeRemainingMl(p.totalMl, p.perfumeId, sales);
+
+      const stockLocal: Record<string, number> = {};
+      for (const p of store.perfumes) stockLocal[p.perfumeId] = p.stockMl;
+      for (const s of store.sales) {
+        if (oldSaleIds.has(s.id)) {
+          stockLocal[s.perfumeId] = (stockLocal[s.perfumeId] ?? 0) + s.mlSold;
+        }
       }
 
-      // Re-apply the edited/added lines as new sales, validating stock.
+      // Re-apply the edited/added lines. Never block — warn only. Stock may go
+      // negative ("what I say goes").
+      const costIndex = buildCostIndex(store.costCatalog);
       const items: OrderLineRecord[] = [];
+      let oversold = 0;
       for (const it of input.items) {
         let saleId: string | null = null;
         if (it.perfumeId !== null && it.mlSold > 0) {
-          const rem = remaining[it.perfumeId] ?? 0;
-          if (it.mlSold > rem) {
-            toast.error(
-              `Not enough stock for ${it.perfumeName} — only ${rem.toFixed(1)} ml left.`,
-            );
-            return false;
-          }
+          const rem = stockLocal[it.perfumeId] ?? 0;
+          if (it.mlSold > rem) oversold += 1;
           const sale: Sale = {
             id: generateId("sale"),
             perfumeId: it.perfumeId,
@@ -871,9 +1023,11 @@ export function useInventory() {
             totalPrice: it.unitPrice,
           };
           sales = [...sales, sale];
-          remaining[it.perfumeId] = rem - it.mlSold;
+          stockLocal[it.perfumeId] = rem - it.mlSold;
           saleId = sale.id;
         }
+        const pc =
+          it.mlSold > 0 ? lookupCost(costIndex, it.brand, it.perfumeName) : null;
         items.push({
           perfumeId: it.perfumeId,
           perfumeName: it.perfumeName,
@@ -881,11 +1035,26 @@ export function useInventory() {
           size: it.size,
           mlSold: it.mlSold,
           unitPrice: it.unitPrice,
+          unitCost:
+            pc !== null && it.mlSold > 0
+              ? decantPerfumeCost(pc, it.mlSold)
+              : undefined,
           saleId,
         });
       }
 
+      const updatedPerfumes = store.perfumes.map((p) => ({
+        ...p,
+        stockMl: stockLocal[p.perfumeId] ?? p.stockMl,
+      }));
+
       const total = items.reduce((sum, i) => sum + i.unitPrice, 0);
+      const revenue = computeChargedTotal(
+        total,
+        input.discountPct,
+        input.deliveryCharge,
+      );
+      const profit = orderProfitFromItems(items, revenue);
       const updatedOrder: Order = {
         ...order,
         customerName: input.customerName.trim(),
@@ -898,23 +1067,32 @@ export function useInventory() {
         weightG: input.weightG,
         boxId: input.boxId,
         paymentMode: input.paymentMode,
-        amountOverride: input.amountOverride,
+        discountPct: input.discountPct,
+        deliveryCharge: input.deliveryCharge,
+        amountOverride: null,
         items,
         total,
+        profit,
       };
       const entry = makeAuditEntry(
         "edit",
         "sale",
         orderId,
-        `Edited order${updatedOrder.customerName !== "" ? ` for ${updatedOrder.customerName}` : ""} — now ₹${total}`,
+        `Edited order${updatedOrder.customerName !== "" ? ` for ${updatedOrder.customerName}` : ""} — now ₹${total}, ₹${Math.round(profit)} profit`,
       );
       persist({
         ...store,
+        perfumes: updatedPerfumes,
         sales,
         orders: store.orders.map((o) => (o.id === orderId ? updatedOrder : o)),
         auditLog: [...store.auditLog, entry],
       });
       toast.success("Order updated — stock adjusted.");
+      if (oversold > 0) {
+        toast.warning(
+          `${oversold} item${oversold !== 1 ? "s" : ""} pushed stock negative — saved anyway.`,
+        );
+      }
       return true;
     },
     [store, persist],
@@ -926,9 +1104,13 @@ export function useInventory() {
     sales: store.sales,
     orders: store.orders,
     auditLog: store.auditLog,
+    costCatalog: store.costCatalog,
     remainingMlMap,
-    totalStockValue,
+    totalInvestment,
+    totalPurchasedCount,
+    totalPurchasedMl,
     totalRevenue,
+    totalProfit,
     addBrand,
     editBrand,
     deleteBrand,
@@ -936,12 +1118,15 @@ export function useInventory() {
     editPerfume,
     deletePerfume,
     setPerfumeImage,
+    setPerfumeStock,
     recordSale,
     editSale,
     deleteSale,
     bulkImport,
     importCatalog,
     clearAllInventory,
+    upsertCost,
+    deleteCost,
     confirmOrder,
     deleteOrder,
     editOrder,

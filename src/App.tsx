@@ -6,6 +6,7 @@ import { useInventory } from "./hooks/useInventory";
 import { AuditPage } from "./pages/AuditPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ComparisonPage } from "./pages/ComparisonPage";
+import { CostsPage } from "./pages/CostsPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { OrderPage } from "./pages/OrderPage";
 import { OrderHistoryPage } from "./pages/OrderHistoryPage";
@@ -20,8 +21,11 @@ export default function App() {
     sales,
     auditLog,
     remainingMlMap,
-    totalStockValue,
+    totalInvestment,
+    totalPurchasedCount,
+    totalPurchasedMl,
     totalRevenue,
+    totalProfit,
     addBrand,
     editBrand,
     deleteBrand,
@@ -29,12 +33,16 @@ export default function App() {
     editPerfume,
     deletePerfume,
     setPerfumeImage,
+    setPerfumeStock,
     recordSale,
     editSale,
     deleteSale,
     bulkImport,
     importCatalog,
     clearAllInventory,
+    costCatalog,
+    upsertCost,
+    deleteCost,
     orders,
     confirmOrder,
     deleteOrder,
@@ -58,8 +66,11 @@ export default function App() {
           perfumes={perfumes}
           brands={brands}
           sales={sales}
-          totalStockValue={totalStockValue}
+          totalInvestment={totalInvestment}
+          totalPurchasedCount={totalPurchasedCount}
+          totalPurchasedMl={totalPurchasedMl}
           totalRevenue={totalRevenue}
+          totalProfit={totalProfit}
           remainingMlMap={remainingMlMap}
         />
       )}
@@ -75,6 +86,7 @@ export default function App() {
           onDeleteBrand={deleteBrand}
           onEditPerfume={editPerfume}
           onDeletePerfume={deletePerfume}
+          onSetStock={setPerfumeStock}
           onBulkImport={bulkImport}
           catalog={catalog}
           costSheetId={appPrefs.costSheetId}
@@ -98,6 +110,7 @@ export default function App() {
         <OrderPage
           catalog={catalog}
           perfumes={perfumes}
+          costCatalog={costCatalog}
           onConfirmOrder={confirmOrder}
           syncing={syncing}
           lastSynced={lastSynced}
@@ -121,6 +134,13 @@ export default function App() {
         />
       )}
       {activePage === "compare" && <ComparisonPage myCatalog={catalog} />}
+      {activePage === "costs" && (
+        <CostsPage
+          costCatalog={costCatalog}
+          onUpsert={upsertCost}
+          onDelete={deleteCost}
+        />
+      )}
       {activePage === "audit" && <AuditPage auditLog={auditLog} />}
     </Layout>
   );

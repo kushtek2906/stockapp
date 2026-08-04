@@ -104,9 +104,6 @@ export function PerfumePreviewDialog({
                 <span className="flex items-center gap-2">
                   <span className="text-stone-700">
                     {target.remainingMl.toFixed(1)} ml
-                    {target.totalMl !== null && (
-                      <span className="text-stone-400"> / {target.totalMl} ml</span>
-                    )}
                   </span>
                   <Badge variant={status}>{STATUS_LABEL[status]}</Badge>
                 </span>

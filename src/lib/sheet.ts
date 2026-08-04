@@ -5,6 +5,7 @@ import {
   type DecantCatalogEntry,
   type DecantSize,
 } from "../types";
+import { normalizeName } from "./normalize";
 
 const CATALOG_KEY = "decantverse_catalog_v1";
 
@@ -139,6 +140,42 @@ export async function fetchCatalog(
     sheetId,
     gid,
   };
+}
+
+/**
+ * Fetch the internal "30ml prices" tab and return a map of
+ * `normalizeName(brand + " " + perfume)` → 30ml price. The customer-facing sheet
+ * has 30ml blank (hidden), so the Order page merges these in live. Returns an
+ * empty map on any failure so the rest of the catalog still works.
+ */
+export async function fetch30mlPrices(
+  sheetId: string,
+  gid: string,
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  try {
+    const res = await fetch(buildGvizUrl(sheetId, gid));
+    if (!res.ok) return map;
+    const rows = parseCsv(await res.text());
+    if (rows.length < 2) return map;
+    const header = rows[0].map((h) => h.trim().toLowerCase());
+    const brandIdx = header.indexOf("brand");
+    const perfumeIdx = header.indexOf("perfume");
+    const price30Idx = header.indexOf("30ml");
+    if (perfumeIdx === -1 || price30Idx === -1) return map;
+    for (let r = 1; r < rows.length; r++) {
+      const cells = rows[r];
+      const perfume = (cells[perfumeIdx] ?? "").trim();
+      if (perfume === "") continue;
+      const price = parsePrice(cells[price30Idx]);
+      if (price === undefined) continue;
+      const brand = brandIdx === -1 ? "" : (cells[brandIdx] ?? "").trim();
+      map.set(normalizeName(`${brand} ${perfume}`), price);
+    }
+  } catch {
+    // offline / parse error — return whatever we have (possibly empty)
+  }
+  return map;
 }
 
 export interface CostRow {

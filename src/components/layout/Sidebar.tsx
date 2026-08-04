@@ -1,6 +1,7 @@
 import {
   ArrowLeftRight,
   ClipboardList,
+  Coins,
   History,
   LayoutDashboard,
   LogOut,
@@ -51,6 +52,11 @@ const NAV_ITEMS: NavItem[] = [
     id: "compare",
     label: "Compare",
     icon: <ArrowLeftRight className="size-4" aria-hidden />,
+  },
+  {
+    id: "costs",
+    label: "Costs",
+    icon: <Coins className="size-4" aria-hidden />,
   },
   {
     id: "audit",

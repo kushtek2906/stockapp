@@ -1,4 +1,5 @@
 import type { BoxType, Order } from "../types";
+import { orderChargedTotal } from "./order";
 
 const TAX_PERCENTAGE = 18;
 const CATEGORY = "Beauty";
@@ -82,7 +83,7 @@ export function buildShipmentCsv(orders: Order[], boxes: BoxType[]): string {
     const box =
       boxes.find((b) => b.id === order.boxId) ?? boxes[0] ?? null;
     const num = shipmentNumber(order);
-    const finalAmount = order.amountOverride ?? order.total;
+    const finalAmount = orderChargedTotal(order);
     const payment = order.paymentMode ?? "Prepaid";
     const cod = payment === "COD" ? finalAmount : 0;
     const weight = order.weightG ?? box?.weightG ?? "";

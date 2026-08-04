@@ -11,17 +11,12 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Label } from "../ui/Label";
 
-function buildSchema(maxMl: number) {
-  return z.object({
-    mlSold: z
-      .number({ error: "Must be a number > 0" })
-      .positive("Must be > 0")
-      .max(maxMl, `Max available: ${maxMl.toFixed(1)} ml`),
-    totalPrice: z
-      .number({ error: "Must be a number ≥ 0" })
-      .nonnegative("Must be ≥ 0"),
-  });
-}
+const schema = z.object({
+  mlSold: z.number({ error: "Must be a number > 0" }).positive("Must be > 0"),
+  totalPrice: z
+    .number({ error: "Must be a number ≥ 0" })
+    .nonnegative("Must be ≥ 0"),
+});
 
 type FormValues = EditSaleInput;
 
@@ -42,9 +37,10 @@ export function EditSaleDialog({
   remainingMlMap,
   onSave,
 }: EditSaleDialogProps) {
-  const remainingWithoutThis =
+  // Stock this perfume would have if this sale's ml were returned — shown as a
+  // hint only. Editing beyond it is allowed (stock can go negative).
+  const availableIfReverted =
     (remainingMlMap[sale.perfumeId] ?? 0) + sale.mlSold;
-  const schema = buildSchema(remainingWithoutThis);
 
   const {
     register,
@@ -96,10 +92,11 @@ export function EditSaleDialog({
               {perfume?.perfumeCode ?? sale.perfumeId} · {formatDate(sale.date)}
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              Max allowed:{" "}
+              Available:{" "}
               <span className="font-medium">
-                {remainingWithoutThis.toFixed(1)} ml
-              </span>
+                {availableIfReverted.toFixed(1)} ml
+              </span>{" "}
+              (you can exceed it — stock will go negative)
             </p>
           </div>
 

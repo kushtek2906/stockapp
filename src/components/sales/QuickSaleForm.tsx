@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type { Brand, Perfume } from "../../types";
 import { loadPrefs, savePrefs } from "../../lib/prefs";
-import { formatCurrency, getStockStatus } from "../../lib/utils";
+import { getStockStatus } from "../../lib/utils";
 import type { RecordSaleInput } from "../../hooks/useInventory";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -273,14 +273,7 @@ export function QuickSaleForm({
                   <span className="font-medium text-stone-700">
                     {remaining.toFixed(1)} ml
                   </span>{" "}
-                  remaining ·{" "}
-                  {formatCurrency(
-                    selectedPerfume.totalMl > 0
-                      ? (selectedPerfume.costPrice / selectedPerfume.totalMl) *
-                          remaining
-                      : 0,
-                  )}{" "}
-                  stock value
+                  remaining
                 </span>
                 <Badge variant={STATUS_BADGE[status]}>{status}</Badge>
               </div>
