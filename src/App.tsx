@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Layout } from "./components/layout/Layout";
 import { loadPrefs } from "./lib/prefs";
+import { applyPricebookToCatalog, pendingPublishUpdates } from "./lib/pricebook";
 import { useCatalog } from "./hooks/useCatalog";
 import { useInventory } from "./hooks/useInventory";
 import { AuditPage } from "./pages/AuditPage";
@@ -10,6 +11,7 @@ import { CostsPage } from "./pages/CostsPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { OrderPage } from "./pages/OrderPage";
 import { OrderHistoryPage } from "./pages/OrderHistoryPage";
+import { PricingPage } from "./pages/PricingPage";
 import { SalesPage } from "./pages/SalesPage";
 import type { Page } from "./types";
 
@@ -43,6 +45,8 @@ export default function App() {
     costCatalog,
     upsertCost,
     deleteCost,
+    pricebook,
+    setPrice,
     orders,
     confirmOrder,
     deleteOrder,
@@ -58,6 +62,18 @@ export default function App() {
     sheetId,
     gid,
   } = useCatalog();
+
+  // The effective catalog: sheet names/inspiration with app-owned prices layered
+  // on top. Order pricing, profit and comparisons all read this.
+  const effectiveCatalog = useMemo(
+    () => applyPricebookToCatalog(catalog, pricebook),
+    [catalog, pricebook],
+  );
+  // App-owned prices that differ from the live sheet — the "unpublished" set.
+  const pendingUpdates = useMemo(
+    () => pendingPublishUpdates(catalog, pricebook),
+    [catalog, pricebook],
+  );
 
   return (
     <Layout activePage={activePage} onNavigate={setActivePage}>
@@ -108,7 +124,7 @@ export default function App() {
       )}
       {activePage === "order" && (
         <OrderPage
-          catalog={catalog}
+          catalog={effectiveCatalog}
           perfumes={perfumes}
           costCatalog={costCatalog}
           onConfirmOrder={confirmOrder}
@@ -133,12 +149,28 @@ export default function App() {
           onSetPerfumeImage={setPerfumeImage}
         />
       )}
-      {activePage === "compare" && <ComparisonPage myCatalog={catalog} />}
+      {activePage === "compare" && <ComparisonPage myCatalog={effectiveCatalog} />}
       {activePage === "costs" && (
         <CostsPage
           costCatalog={costCatalog}
           onUpsert={upsertCost}
           onDelete={deleteCost}
+        />
+      )}
+      {activePage === "pricing" && (
+        <PricingPage
+          catalog={effectiveCatalog}
+          costCatalog={costCatalog}
+          pricebook={pricebook}
+          pendingUpdates={pendingUpdates}
+          onSetPrice={setPrice}
+          onPublished={() => {
+            void refresh();
+          }}
+          syncing={syncing}
+          onRefresh={() => {
+            void refresh();
+          }}
         />
       )}
       {activePage === "audit" && <AuditPage auditLog={auditLog} />}

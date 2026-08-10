@@ -53,6 +53,7 @@ export type Page =
   | "history"
   | "compare"
   | "costs"
+  | "pricing"
   | "audit";
 
 // ── Google Sheet decant catalog (read-only pricing source) ───────────────────
@@ -147,6 +148,19 @@ export interface PerfumeCost {
   bottleMl: number;
 }
 
+/**
+ * App-owned selling prices for a perfume — an editable overlay on top of the
+ * read-only Google Sheet catalog. When a size is present here it wins over the
+ * sheet price (order pricing, profit, and the published customer sheet all read
+ * the effective = overlay-or-sheet price). `key` is `normalizeName(brand + " " + perfume)`.
+ */
+export interface PerfumePrice {
+  key: string;
+  brand: string;
+  perfume: string;
+  prices: Partial<Record<DecantSize, number>>;
+}
+
 export interface InventoryStore {
   brands: Brand[];
   perfumes: Perfume[];
@@ -155,4 +169,6 @@ export interface InventoryStore {
   auditLog: AuditEntry[];
   /** Per-perfume bottle cost + size, powering order profit. */
   costCatalog: PerfumeCost[];
+  /** App-owned selling-price overrides (overlay on the read-only sheet). */
+  pricebook: PerfumePrice[];
 }

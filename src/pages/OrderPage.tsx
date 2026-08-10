@@ -408,18 +408,12 @@ export function OrderPage({
   const [weightStr, setWeightStr] = useState("");
   const [cod, setCod] = useState(false);
   const [discountStr, setDiscountStr] = useState("");
-  const [deliveryStr, setDeliveryStr] = useState("100");
-
-  const discountPct = Math.max(0, Number(discountStr) || 0);
-  const deliveryCharge = Math.max(0, Number(deliveryStr) || 0);
+  const [deliveryStr, setDeliveryStr] = useState("");
+  const [deliveryTouched, setDeliveryTouched] = useState(false);
+  const [finalAmountStr, setFinalAmountStr] = useState("");
 
   const boxes = useMemo(() => loadPrefs().boxes, []);
   const [boxId, setBoxId] = useState<string>(() => boxes[0]?.id ?? "");
-
-  const bill = useMemo(
-    () => formatBill(items, showBrand, discountPct, deliveryCharge),
-    [items, showBrand, discountPct, deliveryCharge],
-  );
 
   // Billable = has a resolved size + price (tracked or not). These go on the order;
   // only the tracked ones also deduct stock.
@@ -437,12 +431,29 @@ export function OrderPage({
     [billableItems],
   );
 
+  const discountPct = Math.max(0, Number(discountStr) || 0);
+  // Free delivery from ₹1000; otherwise ₹100 — the default, until the user edits it.
+  const autoDelivery = computedTotal < 1000 ? 100 : 0;
+  const deliveryValue = deliveryTouched ? deliveryStr : String(autoDelivery);
+  const deliveryCharge = Math.max(0, Number(deliveryValue) || 0);
+  const amountOverride =
+    finalAmountStr.trim() !== "" && Number.isFinite(Number(finalAmountStr))
+      ? Number(finalAmountStr)
+      : null;
+
+  const bill = useMemo(
+    () =>
+      formatBill(items, showBrand, discountPct, deliveryCharge, amountOverride),
+    [items, showBrand, discountPct, deliveryCharge, amountOverride],
+  );
+
   const costIndex = useMemo(() => buildCostIndex(costCatalog), [costCatalog]);
 
-  // Live order profit: revenue = subtotal − discount + delivery charge.
+  // Live order profit: revenue = manual override, else subtotal − discount + delivery.
   const revenue = useMemo(
-    () => computeChargedTotal(computedTotal, discountPct, deliveryCharge),
-    [computedTotal, discountPct, deliveryCharge],
+    () =>
+      computeChargedTotal(computedTotal, discountPct, deliveryCharge, amountOverride),
+    [computedTotal, discountPct, deliveryCharge, amountOverride],
   );
 
   const orderProfit = useMemo(
@@ -471,7 +482,9 @@ export function OrderPage({
     setWeightStr("");
     setCod(false);
     setDiscountStr("");
-    setDeliveryStr("100");
+    setDeliveryStr("");
+    setDeliveryTouched(false);
+    setFinalAmountStr("");
   };
 
   const handleGenerate = () => {
@@ -545,6 +558,7 @@ export function OrderPage({
       paymentMode: cod ? "COD" : "Prepaid",
       discountPct,
       deliveryCharge,
+      amountOverride,
       items: orderItems,
     });
 
@@ -801,13 +815,31 @@ export function OrderPage({
                         id="ord-delivery"
                         type="number"
                         min="0"
-                        value={deliveryStr}
-                        onChange={(e) => setDeliveryStr(e.target.value)}
+                        value={deliveryValue}
+                        onChange={(e) => {
+                          setDeliveryTouched(true);
+                          setDeliveryStr(e.target.value);
+                        }}
                         placeholder="100"
                         className="h-9 text-sm"
                         aria-label="Delivery charge"
                       />
                     </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="ord-total" className="text-xs">
+                      Total ₹ (optional — overrides discount &amp; delivery)
+                    </Label>
+                    <Input
+                      id="ord-total"
+                      type="number"
+                      min="0"
+                      value={finalAmountStr}
+                      onChange={(e) => setFinalAmountStr(e.target.value)}
+                      placeholder={`${revenue}`}
+                      className="h-9 text-sm"
+                      aria-label="Manual total amount"
+                    />
                   </div>
                 </div>
 

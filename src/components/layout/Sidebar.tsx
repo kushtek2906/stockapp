@@ -8,6 +8,7 @@ import {
   Package,
   ReceiptText,
   ShoppingCart,
+  Tags,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -57,6 +58,11 @@ const NAV_ITEMS: NavItem[] = [
     id: "costs",
     label: "Costs",
     icon: <Coins className="size-4" aria-hidden />,
+  },
+  {
+    id: "pricing",
+    label: "Pricing",
+    icon: <Tags className="size-4" aria-hidden />,
   },
   {
     id: "audit",

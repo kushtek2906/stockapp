@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { loadStore } from "../lib/storage";
-import { loadInventory, saveInventory } from "../lib/remoteStore";
+import {
+  loadInventory,
+  saveInventory,
+  setOnStoreUpdate,
+} from "../lib/remoteStore";
 import type { ImportPayload } from "../lib/importSchema";
 import { normalizeName } from "../lib/normalize";
 import { computeChargedTotal } from "../lib/order";
+import { priceKey } from "../lib/pricebook";
 import { nextPerfumeCode, today } from "../lib/utils";
 import {
   buildCostIndex,
@@ -24,6 +29,7 @@ import type {
   PaymentMode,
   Perfume,
   PerfumeCost,
+  PerfumePrice,
   Sale,
 } from "../types";
 
@@ -113,6 +119,8 @@ export interface OrderDetailsInput {
   discountPct: number;
   /** Flat delivery charge added after the discount. */
   deliveryCharge: number;
+  /** Manual final-amount override; when set it supersedes discount + delivery. */
+  amountOverride: number | null;
 }
 
 export interface ConfirmOrderInput extends OrderDetailsInput {
@@ -151,11 +159,16 @@ export function useInventory() {
 
   useEffect(() => {
     let active = true;
+    // Reflect merges pulled in from another device/tab during a save.
+    setOnStoreUpdate((s) => {
+      if (active) setStore(s);
+    });
     void loadInventory().then((s) => {
       if (active) setStore(s);
     });
     return () => {
       active = false;
+      setOnStoreUpdate(null);
     };
   }, []);
 
@@ -803,6 +816,53 @@ export function useInventory() {
     [store, persist],
   );
 
+  // ── Pricebook (app-owned selling prices; overlay on the read-only sheet) ─────
+
+  /** Set (value) or clear (null) an app-owned selling price for a perfume/size.
+   * Clearing falls back to the sheet price. Quiet — meant for inline grid edits. */
+  const setPrice = useCallback(
+    (
+      brand: string,
+      perfume: string,
+      size: DecantSize,
+      value: number | null,
+    ): void => {
+      const key = priceKey(brand, perfume);
+      const existing = store.pricebook.find((p) => p.key === key);
+
+      let pricebook: PerfumePrice[];
+      if (value === null) {
+        if (existing === undefined) return;
+        const nextPrices = { ...existing.prices };
+        delete nextPrices[size];
+        pricebook =
+          Object.keys(nextPrices).length === 0
+            ? store.pricebook.filter((p) => p.key !== key)
+            : store.pricebook.map((p) =>
+                p.key === key ? { ...p, prices: nextPrices } : p,
+              );
+      } else if (existing !== undefined) {
+        pricebook = store.pricebook.map((p) =>
+          p.key === key
+            ? { ...p, prices: { ...p.prices, [size]: value } }
+            : p,
+        );
+      } else {
+        pricebook = [
+          ...store.pricebook,
+          {
+            key,
+            brand: brand.trim(),
+            perfume: perfume.trim(),
+            prices: { [size]: value },
+          },
+        ];
+      }
+      persist({ ...store, pricebook });
+    },
+    [store, persist],
+  );
+
   const clearAllInventory = useCallback((): void => {
     const removed = {
       brands: store.brands.length,
@@ -822,6 +882,7 @@ export function useInventory() {
       orders: [],
       auditLog: [...store.auditLog, entry],
       costCatalog: store.costCatalog, // keep the cost reference intact
+      pricebook: store.pricebook, // keep selling prices intact
     });
     toast.success("Inventory cleared — all brands, perfumes, and sales removed.");
   }, [store, persist]);
@@ -889,6 +950,7 @@ export function useInventory() {
         total,
         input.discountPct,
         input.deliveryCharge,
+        input.amountOverride,
       );
       const profit = orderProfitFromItems(items, revenue);
       const nextSeq =
@@ -909,6 +971,7 @@ export function useInventory() {
         paymentMode: input.paymentMode,
         discountPct: input.discountPct,
         deliveryCharge: input.deliveryCharge,
+        amountOverride: input.amountOverride,
         items,
         total,
         profit,
@@ -1053,6 +1116,7 @@ export function useInventory() {
         total,
         input.discountPct,
         input.deliveryCharge,
+        input.amountOverride,
       );
       const profit = orderProfitFromItems(items, revenue);
       const updatedOrder: Order = {
@@ -1069,7 +1133,7 @@ export function useInventory() {
         paymentMode: input.paymentMode,
         discountPct: input.discountPct,
         deliveryCharge: input.deliveryCharge,
-        amountOverride: null,
+        amountOverride: input.amountOverride,
         items,
         total,
         profit,
@@ -1105,6 +1169,7 @@ export function useInventory() {
     orders: store.orders,
     auditLog: store.auditLog,
     costCatalog: store.costCatalog,
+    pricebook: store.pricebook,
     remainingMlMap,
     totalInvestment,
     totalPurchasedCount,
@@ -1127,6 +1192,7 @@ export function useInventory() {
     clearAllInventory,
     upsertCost,
     deleteCost,
+    setPrice,
     confirmOrder,
     deleteOrder,
     editOrder,

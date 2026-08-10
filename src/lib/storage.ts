@@ -101,6 +101,7 @@ const SEED_DATA: InventoryStore = {
   orders: [],
   auditLog: [],
   costCatalog: COST_CATALOG_SEED,
+  pricebook: [],
 };
 
 /**
@@ -157,6 +158,39 @@ export function normalizeStore(
     // Seed the cost catalog only when the field is truly absent (first run or a
     // pre-cost-catalog store). An explicit empty array (user cleared it) is kept.
     costCatalog,
+    pricebook: raw?.pricebook ?? [],
+  };
+}
+
+function mergeById<T>(base: T[], incoming: T[], idOf: (t: T) => string): T[] {
+  const map = new Map<string, T>();
+  for (const b of base) map.set(idOf(b), b);
+  for (const i of incoming) map.set(idOf(i), i); // incoming wins on conflict
+  return Array.from(map.values());
+}
+
+/**
+ * Union two stores so concurrent additions from different devices/tabs are never
+ * lost. `incoming` wins on id conflicts; ids present on only one side are kept.
+ * This is what makes cloud sync non-destructive (the whole store is one blob, so
+ * a plain overwrite would drop the other device's orders).
+ *
+ * Trade-off: a delete on one device can be undone if another device still holds
+ * the row — preventing data LOSS is the priority; deletes reconcile on the next
+ * edit once both sides have synced.
+ */
+export function mergeStores(
+  base: InventoryStore,
+  incoming: InventoryStore,
+): InventoryStore {
+  return {
+    brands: mergeById(base.brands, incoming.brands, (b) => b.brandId),
+    perfumes: mergeById(base.perfumes, incoming.perfumes, (p) => p.perfumeId),
+    sales: mergeById(base.sales, incoming.sales, (s) => s.id),
+    orders: mergeById(base.orders, incoming.orders, (o) => o.id),
+    auditLog: mergeById(base.auditLog, incoming.auditLog, (a) => a.id),
+    costCatalog: mergeById(base.costCatalog, incoming.costCatalog, (c) => c.key),
+    pricebook: mergeById(base.pricebook, incoming.pricebook, (p) => p.key),
   };
 }
 
@@ -237,6 +271,7 @@ function migrateV1(raw: string): InventoryStore {
     orders: [],
     auditLog: [],
     costCatalog: COST_CATALOG_SEED,
+    pricebook: [],
   };
 }
 

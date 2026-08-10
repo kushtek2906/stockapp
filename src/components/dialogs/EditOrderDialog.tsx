@@ -52,6 +52,7 @@ export function EditOrderDialog({
   const [cod, setCod] = useState(false);
   const [discountStr, setDiscountStr] = useState("");
   const [deliveryStr, setDeliveryStr] = useState("100");
+  const [finalAmountStr, setFinalAmountStr] = useState("");
   const [lines, setLines] = useState<EditableLine[]>([]);
   const [addId, setAddId] = useState("");
 
@@ -78,6 +79,9 @@ export function EditOrderDialog({
       setDiscountStr(order.discountPct ? String(order.discountPct) : "");
       setDeliveryStr(
         order.deliveryCharge != null ? String(order.deliveryCharge) : "100",
+      );
+      setFinalAmountStr(
+        order.amountOverride != null ? String(order.amountOverride) : "",
       );
       setLines(
         order.items.map((i) => ({
@@ -115,10 +119,15 @@ export function EditOrderDialog({
   };
 
   const total = lines.reduce((sum, l) => sum + (Number(l.unitPrice) || 0), 0);
+  const overrideAmount =
+    finalAmountStr.trim() !== "" && Number.isFinite(Number(finalAmountStr))
+      ? Number(finalAmountStr)
+      : null;
   const chargedTotal = computeChargedTotal(
     total,
     Math.max(0, Number(discountStr) || 0),
     Math.max(0, Number(deliveryStr) || 0),
+    overrideAmount,
   );
 
   const handleSave = () => {
@@ -144,6 +153,7 @@ export function EditOrderDialog({
       paymentMode: cod ? "COD" : "Prepaid",
       discountPct: Math.max(0, Number(discountStr) || 0),
       deliveryCharge: Math.max(0, Number(deliveryStr) || 0),
+      amountOverride: overrideAmount,
       items,
     });
     if (ok) onOpenChange(false);
@@ -241,6 +251,10 @@ export function EditOrderDialog({
                 <div className="space-y-1">
                   <Label htmlFor="eo-delivery" className="text-xs">Delivery ₹</Label>
                   <Input id="eo-delivery" type="number" min="0" value={deliveryStr} onChange={(e) => setDeliveryStr(e.target.value)} placeholder="100" className="h-9 text-sm" />
+                </div>
+                <div className="col-span-2 space-y-1">
+                  <Label htmlFor="eo-total" className="text-xs">Total ₹ (optional — overrides discount &amp; delivery)</Label>
+                  <Input id="eo-total" type="number" min="0" value={finalAmountStr} onChange={(e) => setFinalAmountStr(e.target.value)} placeholder={`${chargedTotal}`} className="h-9 text-sm" />
                 </div>
               </div>
             </div>

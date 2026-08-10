@@ -2,7 +2,7 @@ import type { BoxType } from "../types";
 
 const PREFS_KEY = "decantverse_prefs";
 
-interface AppPrefs {
+export interface AppPrefs {
   rememberLastPerfume: boolean;
   lastPerfumeId: string | null;
   rememberLastBrand: boolean;
@@ -17,6 +17,9 @@ interface AppPrefs {
    * merged into the catalog live from here. */
   prices30SheetId: string;
   prices30Gid: string;
+  /** Google Apps Script web-app /exec URL used to write app prices back to the
+   * customer sheet (empty until the user sets it up). Per-device. */
+  publishScriptUrl: string;
   /** Competitor's public Google Sheet used for price comparison. */
   competitorSheetId: string;
   competitorSheetGid: string;
@@ -42,6 +45,7 @@ const DEFAULT_PREFS: AppPrefs = {
   costSheetGid: "1021089370",
   prices30SheetId: "14w0zPCEXrmvTpKb4dNNf5AZ64ADb08eMW0eDFuj0wbo",
   prices30Gid: "884879316",
+  publishScriptUrl: "",
   competitorSheetId: "118f-ZLbawdsi38eDv9TqV7pq-yxjaHPdunruCwuerb8",
   competitorSheetGid: "0",
   boxes: DEFAULT_BOXES,

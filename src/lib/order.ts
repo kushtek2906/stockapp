@@ -278,6 +278,7 @@ export function formatBill(
   showBrand = false,
   discountPct = 0,
   deliveryCharge = 0,
+  amountOverride: number | null = null,
 ): string {
   const lines: string[] = [];
   let subtotal = 0;
@@ -296,9 +297,9 @@ export function formatBill(
     }
   });
   lines.push("--------");
-  // Only add the breakdown when there's a discount or delivery; otherwise keep
-  // the plain "TOTAL - X/-" format.
-  if (discountPct > 0 || deliveryCharge > 0) {
+  // A manual total override supersedes discount/delivery — show just the total.
+  // Otherwise show the discount/delivery breakdown when either is present.
+  if (amountOverride === null && (discountPct > 0 || deliveryCharge > 0)) {
     lines.push(`Subtotal - ${subtotal}`);
     if (discountPct > 0) {
       lines.push(`Discount (${discountPct}%) - -${discountAmount(subtotal, discountPct)}`);
@@ -307,7 +308,12 @@ export function formatBill(
       lines.push(`Delivery - ${deliveryCharge}`);
     }
   }
-  const finalTotal = computeChargedTotal(subtotal, discountPct, deliveryCharge);
+  const finalTotal = computeChargedTotal(
+    subtotal,
+    discountPct,
+    deliveryCharge,
+    amountOverride,
+  );
   lines.push(`TOTAL - ${finalTotal}/-`);
   return lines.join("\n");
 }
