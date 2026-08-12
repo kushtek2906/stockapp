@@ -105,7 +105,16 @@ export function ImportFromSheetDialog({
                   </span>{" "}
                   perfumes found in the price sheet.
                 </li>
-                <li>Perfumes already in your inventory are skipped (matched by name).</li>
+                <li>
+                  Perfumes already in your inventory are skipped (matched by
+                  name) — but a changed cost in the revision tab still updates
+                  them.
+                </li>
+                <li>
+                  Every imported perfume also appears on the Costs tab (bottle
+                  size defaults to{" "}
+                  <span className="font-medium text-stone-800">100 ml</span>).
+                </li>
                 <li>
                   Stock quantity is set to{" "}
                   <span className="font-medium text-stone-800">0 ml</span> — set
@@ -135,6 +144,13 @@ export function ImportFromSheetDialog({
                 {result.skipped > 0 && (
                   <p className="text-xs text-emerald-700">
                     {result.skipped} already in inventory (skipped).
+                  </p>
+                )}
+                {result.costsUpdated > 0 && (
+                  <p className="text-xs text-emerald-700">
+                    {result.costsUpdated} existing perfume cost
+                    {result.costsUpdated !== 1 ? "s" : ""} refreshed from the
+                    revision tab.
                   </p>
                 )}
                 {result.missingCost > 0 && (

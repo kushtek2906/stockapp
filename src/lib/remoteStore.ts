@@ -100,7 +100,10 @@ async function upsertNow(store: InventoryStore): Promise<void> {
       row?.data != null
         ? normalizeStore(row.data as Partial<InventoryStore>)
         : null;
-    const merged = remote !== null ? mergeStores(remote, store) : store;
+    // normalizeStore re-runs the cost-link reconcile so a merge can't leave
+    // duplicate or diverged cost/price rows behind.
+    const merged =
+      remote !== null ? normalizeStore(mergeStores(remote, store)) : store;
     const ts = new Date().toISOString();
     const { data: written, error: writeErr } = await supabase
       .from(APP_STATE_TABLE)

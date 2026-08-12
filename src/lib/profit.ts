@@ -14,13 +14,19 @@ export const ORDER_COSTS = {
 
 export interface CostIndex {
   byKey: Map<string, PerfumeCost>;
+  /** Rows linked to an inventory perfume, by `perfumeId`. */
+  byPerfumeId: Map<string, PerfumeCost>;
   list: PerfumeCost[];
 }
 
 export function buildCostIndex(costCatalog: PerfumeCost[]): CostIndex {
   const byKey = new Map<string, PerfumeCost>();
-  for (const c of costCatalog) byKey.set(c.key, c);
-  return { byKey, list: costCatalog };
+  const byPerfumeId = new Map<string, PerfumeCost>();
+  for (const c of costCatalog) {
+    byKey.set(c.key, c);
+    if (c.perfumeId != null) byPerfumeId.set(c.perfumeId, c);
+  }
+  return { byKey, byPerfumeId, list: costCatalog };
 }
 
 /** Minimum token-set similarity to accept a fuzzy cost match. */
@@ -51,6 +57,24 @@ export function lookupCost(
     }
   }
   return bestScore >= LOOKUP_THRESHOLD ? best : null;
+}
+
+/**
+ * Cost for an order line: the inventory-linked row wins when the line carries a
+ * `perfumeId` (rename-proof, no fuzzy ambiguity); unlinked lines fall back to
+ * the name/fuzzy lookup above.
+ */
+export function lookupCostForItem(
+  index: CostIndex,
+  perfumeId: string | null | undefined,
+  brand: string,
+  perfume: string,
+): PerfumeCost | null {
+  if (perfumeId != null) {
+    const linked = index.byPerfumeId.get(perfumeId);
+    if (linked !== undefined) return linked;
+  }
+  return lookupCost(index, brand, perfume);
 }
 
 export function costPerMl(pc: PerfumeCost): number {

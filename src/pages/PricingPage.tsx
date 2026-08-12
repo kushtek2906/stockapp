@@ -17,6 +17,7 @@ import {
   priceKey,
   type PriceUpdate,
 } from "../lib/pricebook";
+import { normalizeName } from "../lib/normalize";
 import { loadPrefs } from "../lib/prefs";
 import { publishPrices } from "../lib/publish";
 import {
@@ -29,9 +30,11 @@ import {
 import { cn } from "../lib/utils";
 import {
   DECANT_SIZES,
+  type Brand,
   type DecantCatalog,
   type DecantCatalogEntry,
   type DecantSize,
+  type Perfume,
   type PerfumeCost,
   type PerfumePrice,
 } from "../types";
@@ -39,6 +42,9 @@ import {
 interface PricingPageProps {
   catalog: DecantCatalog | null;
   costCatalog: PerfumeCost[];
+  /** Inventory, for the rows that aren't on the sheet ("local-only"). */
+  perfumes: Perfume[];
+  brands: Brand[];
   pricebook: PerfumePrice[];
   /** App prices that differ from the live sheet (unpublished). */
   pendingUpdates: PriceUpdate[];
@@ -47,11 +53,21 @@ interface PricingPageProps {
     perfume: string,
     size: DecantSize,
     value: number | null,
+    perfumeId?: string | null,
   ) => void;
   /** Called after a successful publish so the sheet is re-read. */
   onPublished: () => void;
   syncing: boolean;
   onRefresh: () => void;
+}
+
+/** One Pricing row: a sheet entry, or an inventory perfume absent from the
+ * sheet (local-only — its prices live in the app's pricebook and are never
+ * published). */
+interface PricingRow {
+  entry: DecantCatalogEntry;
+  localOnly: boolean;
+  perfumeId: string | null;
 }
 
 /** Minimum margin over unit cost before a price is flagged as too thin (30% floor). */
@@ -159,6 +175,8 @@ function PriceCell({
 export function PricingPage({
   catalog,
   costCatalog,
+  perfumes,
+  brands,
   pricebook,
   pendingUpdates,
   onSetPrice,
@@ -188,34 +206,82 @@ export function PricingPage({
     [pendingUpdates],
   );
 
-  const entries = useMemo(() => {
-    const list = catalog?.entries ?? [];
+  // Pricebook rows for inventory perfumes not on the sheet, by perfume id.
+  const priceByPerfumeId = useMemo(() => {
+    const m = new Map<string, PerfumePrice>();
+    for (const p of pricebook) {
+      if (p.perfumeId != null) m.set(p.perfumeId, p);
+    }
+    return m;
+  }, [pricebook]);
+
+  // Sheet rows + local-only rows (inventory perfumes the sheet doesn't list).
+  const allRows = useMemo<PricingRow[]>(() => {
+    if (catalog === null) return [];
+    const sheetNames = new Set<string>();
+    for (const e of catalog.entries) {
+      const n = normalizeName(e.perfume);
+      if (n !== "") sheetNames.add(n);
+      const i = normalizeName(e.inspiration);
+      if (i !== "") sheetNames.add(i);
+    }
+    const brandNameById = new Map(brands.map((b) => [b.brandId, b.name]));
+    const sheet: PricingRow[] = catalog.entries.map((e) => ({
+      entry: e,
+      localOnly: false,
+      perfumeId: null,
+    }));
+    const local: PricingRow[] = perfumes
+      .filter((p) => !sheetNames.has(normalizeName(p.name)))
+      .map((p) => ({
+        localOnly: true,
+        perfumeId: p.perfumeId,
+        entry: {
+          rowIndex: -1,
+          brand: brandNameById.get(p.brandId) ?? "",
+          perfume: p.name,
+          inspiration: "",
+          prices: priceByPerfumeId.get(p.perfumeId)?.prices ?? {},
+        },
+      }));
+    return [...sheet, ...local];
+  }, [catalog, perfumes, brands, priceByPerfumeId]);
+
+  const rows = useMemo(() => {
     const q = query.toLowerCase().trim();
     const filtered =
       q === ""
-        ? list
-        : list.filter(
-            (e) =>
+        ? allRows
+        : allRows.filter(
+            ({ entry: e }) =>
               e.perfume.toLowerCase().includes(q) ||
               e.brand.toLowerCase().includes(q) ||
               e.inspiration.toLowerCase().includes(q),
           );
     return [...filtered].sort(
       (a, b) =>
-        a.brand.localeCompare(b.brand) || a.perfume.localeCompare(b.perfume),
+        a.entry.brand.localeCompare(b.entry.brand) ||
+        a.entry.perfume.localeCompare(b.entry.perfume),
     );
-  }, [catalog, query]);
+  }, [allRows, query]);
+
+  const localCount = useMemo(
+    () => allRows.filter((r) => r.localOnly).length,
+    [allRows],
+  );
 
   const overrideCount = pricebook.reduce(
     (n, p) => n + Object.keys(p.prices).length,
     0,
   );
 
-  const unitCostFor = (
-    entry: DecantCatalogEntry,
-    size: DecantSize,
-  ): number | null => {
-    const pc = lookupCost(costIndex, entry.brand, entry.perfume);
+  const unitCostFor = (row: PricingRow, size: DecantSize): number | null => {
+    // Local rows read their inventory-linked cost directly; sheet rows keep the
+    // name lookup (which itself prefers id-linked rows on exact key hits).
+    const pc =
+      row.localOnly && row.perfumeId !== null
+        ? (costIndex.byPerfumeId.get(row.perfumeId) ?? null)
+        : lookupCost(costIndex, row.entry.brand, row.entry.perfume);
     if (pc === null) return null;
     return decantPerfumeCost(pc, size) + ORDER_COSTS.decantVial;
   };
@@ -370,23 +436,38 @@ export function PricingPage({
               </tr>
             </thead>
             <tbody>
-              {entries.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-12 text-center text-stone-400">
                     No perfumes found.
                   </td>
                 </tr>
               ) : (
-                entries.map((e) => {
+                rows.map((row) => {
+                  const e = row.entry;
                   const key = priceKey(e.brand, e.perfume);
-                  const override = priceIndex.byKey.get(key);
+                  const override = row.localOnly
+                    ? (row.perfumeId !== null
+                        ? priceByPerfumeId.get(row.perfumeId)
+                        : undefined)
+                    : priceIndex.byKey.get(key);
                   return (
                     <tr
-                      key={`${e.rowIndex}-${key}`}
+                      key={row.localOnly ? `local-${row.perfumeId}` : `${e.rowIndex}-${key}`}
                       className="border-b border-stone-100 last:border-0"
                     >
                       <td className="px-4 py-2">
-                        <p className="font-medium text-stone-900">{e.perfume}</p>
+                        <p className="font-medium text-stone-900">
+                          {e.perfume}
+                          {row.localOnly && (
+                            <span
+                              className="ml-1.5 rounded-sm bg-stone-100 px-1.5 py-0.5 align-middle text-[10px] font-medium text-stone-500"
+                              title="In your inventory but not on the Google Sheet — prices stay in the app and are never published."
+                            >
+                              Local
+                            </span>
+                          )}
+                        </p>
                         <p className="text-xs text-stone-400">
                           {e.brand !== "" ? e.brand : "—"}
                         </p>
@@ -395,12 +476,12 @@ export function PricingPage({
                         <td key={sz} className="px-3 py-2">
                           <PriceCell
                             price={e.prices[sz]}
-                            unitCost={unitCostFor(e, sz)}
+                            unitCost={unitCostFor(row, sz)}
                             overridden={override?.prices[sz] !== undefined}
-                            dirty={dirtySet.has(`${key}|${sz}`)}
+                            dirty={!row.localOnly && dirtySet.has(`${key}|${sz}`)}
                             showProfit={showProfit}
                             onCommit={(value) =>
-                              onSetPrice(e.brand, e.perfume, sz, value)
+                              onSetPrice(e.brand, e.perfume, sz, value, row.perfumeId)
                             }
                           />
                         </td>
@@ -416,7 +497,8 @@ export function PricingPage({
 
       <p className="flex flex-wrap items-center gap-1.5 text-xs text-stone-400">
         <Tags className="size-3.5" aria-hidden />
-        {entries.length} of {catalog?.entries.length ?? 0} perfumes ·{" "}
+        {rows.length} of {allRows.length} perfumes
+        {localCount > 0 ? ` (${localCount} inventory-only, "Local")` : ""} ·{" "}
         {overrideCount} app-owned price{overrideCount !== 1 ? "s" : ""} (amber) ·{" "}
         {pendingUpdates.length} unpublished (dot) · under each price:{" "}
         {showProfit ? "profit ₹ per decant" : "margin vs cost %"} (toggle above) ·

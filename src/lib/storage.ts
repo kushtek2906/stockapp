@@ -1,9 +1,10 @@
 import type { Brand, InventoryStore, PerfumeCost, Perfume } from "../types";
 import costCatalogSeed from "../data/costCatalog.seed.json";
+import { reconcileCostLinks } from "./costSync";
 import {
   buildCostIndex,
   decantPerfumeCost,
-  lookupCost,
+  lookupCostForItem,
   orderProfitFromItems,
 } from "./profit";
 
@@ -133,13 +134,28 @@ export function normalizeStore(
     return { ...p, stockMl: p.totalMl - sold };
   });
 
-  const costIndex = buildCostIndex(costCatalog);
-  const orders = (raw?.orders ?? []).map((order) => {
+  // Standing invariant repair: link cost/price rows to perfumes by id, adopt
+  // catalog costs on first link, and keep names/keys in sync. Runs before the
+  // profit backfill so backfilled costs use the reconciled catalog.
+  const reconciled = reconcileCostLinks({
+    brands: raw?.brands ?? [],
+    perfumes: migratedPerfumes,
+    sales,
+    orders: raw?.orders ?? [],
+    auditLog: raw?.auditLog ?? [],
+    // Seed the cost catalog only when the field is truly absent (first run or a
+    // pre-cost-catalog store). An explicit empty array (user cleared it) is kept.
+    costCatalog,
+    pricebook: raw?.pricebook ?? [],
+  });
+
+  const costIndex = buildCostIndex(reconciled.costCatalog);
+  const orders = reconciled.orders.map((order) => {
     if (typeof order.profit === "number") return order;
     const items = order.items.map((it) => {
       if (it.unitCost !== undefined) return it;
       const ml = it.size ?? it.mlSold;
-      const pc = lookupCost(costIndex, it.brand, it.perfumeName);
+      const pc = lookupCostForItem(costIndex, it.perfumeId, it.brand, it.perfumeName);
       return {
         ...it,
         unitCost: pc !== null && ml > 0 ? decantPerfumeCost(pc, ml) : undefined,
@@ -149,17 +165,7 @@ export function normalizeStore(
     return { ...order, items, profit: orderProfitFromItems(items, revenue) };
   });
 
-  return {
-    brands: raw?.brands ?? [],
-    perfumes: migratedPerfumes,
-    sales,
-    orders,
-    auditLog: raw?.auditLog ?? [],
-    // Seed the cost catalog only when the field is truly absent (first run or a
-    // pre-cost-catalog store). An explicit empty array (user cleared it) is kept.
-    costCatalog,
-    pricebook: raw?.pricebook ?? [],
-  };
+  return { ...reconciled, orders };
 }
 
 function mergeById<T>(base: T[], incoming: T[], idOf: (t: T) => string): T[] {
@@ -189,8 +195,19 @@ export function mergeStores(
     sales: mergeById(base.sales, incoming.sales, (s) => s.id),
     orders: mergeById(base.orders, incoming.orders, (o) => o.id),
     auditLog: mergeById(base.auditLog, incoming.auditLog, (a) => a.id),
-    costCatalog: mergeById(base.costCatalog, incoming.costCatalog, (c) => c.key),
-    pricebook: mergeById(base.pricebook, incoming.pricebook, (p) => p.key),
+    // Rows linked to a perfume merge by that id (rename-proof); untracked rows
+    // still merge by key. Any old-key/new-id duplicate pair this lets through is
+    // cleaned up by reconcileCostLinks on the next normalize.
+    costCatalog: mergeById(
+      base.costCatalog,
+      incoming.costCatalog,
+      (c) => c.perfumeId ?? c.key,
+    ),
+    pricebook: mergeById(
+      base.pricebook,
+      incoming.pricebook,
+      (p) => p.perfumeId ?? p.key,
+    ),
   };
 }
 

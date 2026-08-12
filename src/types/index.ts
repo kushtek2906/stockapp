@@ -146,6 +146,9 @@ export interface PerfumeCost {
   perfume: string;
   bottleCost: number;
   bottleMl: number;
+  /** Inventory link. Set → this row IS the cost of that perfume (name/key/cost
+   * kept in sync both ways). Null/absent → untracked reference entry. */
+  perfumeId?: string | null;
 }
 
 /**
@@ -159,6 +162,10 @@ export interface PerfumePrice {
   brand: string;
   perfume: string;
   prices: Partial<Record<DecantSize, number>>;
+  /** Set only for prices of inventory perfumes that are NOT on the sheet
+   * ("local-only" Pricing rows). Sheet-row overrides stay key-only, since their
+   * identity is the sheet row itself. */
+  perfumeId?: string | null;
 }
 
 export interface InventoryStore {

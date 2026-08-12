@@ -83,6 +83,11 @@ export function pendingPublishUpdates(
   const updates: PriceUpdate[] = [];
   for (const p of pricebook) {
     const sheetPrices = sheetByKey.get(p.key);
+    // Prices for inventory perfumes that aren't on the sheet ("local-only"
+    // Pricing rows) have no sheet row to write to — never send them to the
+    // publish script. They become publishable automatically once the perfume
+    // appears on the sheet (the key then matches a sheet row).
+    if (p.perfumeId != null && sheetPrices === undefined) continue;
     for (const sz of DECANT_SIZES) {
       const override = p.prices[sz];
       if (override === undefined) continue;

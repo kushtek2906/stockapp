@@ -153,6 +153,7 @@ export default function App() {
       {activePage === "costs" && (
         <CostsPage
           costCatalog={costCatalog}
+          perfumes={perfumes}
           onUpsert={upsertCost}
           onDelete={deleteCost}
         />
@@ -161,6 +162,8 @@ export default function App() {
         <PricingPage
           catalog={effectiveCatalog}
           costCatalog={costCatalog}
+          perfumes={perfumes}
+          brands={brands}
           pricebook={pricebook}
           pendingUpdates={pendingUpdates}
           onSetPrice={setPrice}

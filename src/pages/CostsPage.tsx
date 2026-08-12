@@ -6,10 +6,12 @@ import { Input } from "../components/ui/Input";
 import { Label } from "../components/ui/Label";
 import { costPerMl } from "../lib/profit";
 import { formatCurrency } from "../lib/utils";
-import type { PerfumeCost } from "../types";
+import type { Perfume, PerfumeCost } from "../types";
 
 interface CostsPageProps {
   costCatalog: PerfumeCost[];
+  /** Inventory, to show which rows are linked (and lock their brand/delete). */
+  perfumes: Perfume[];
   onUpsert: (
     originalKey: string | null,
     input: { brand: string; perfume: string; bottleCost: number; bottleMl: number },
@@ -44,7 +46,12 @@ function commit(
   return true;
 }
 
-export function CostsPage({ costCatalog, onUpsert, onDelete }: CostsPageProps) {
+export function CostsPage({
+  costCatalog,
+  perfumes,
+  onUpsert,
+  onDelete,
+}: CostsPageProps) {
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -92,6 +99,11 @@ export function CostsPage({ costCatalog, onUpsert, onDelete }: CostsPageProps) {
     if (commit(onUpsert, editingKey, brand, perfume, costStr, mlStr)) cancel();
   };
 
+  const perfumeById = useMemo(
+    () => new Map(perfumes.map((p) => [p.perfumeId, p])),
+    [perfumes],
+  );
+
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
     const list =
@@ -120,7 +132,10 @@ export function CostsPage({ costCatalog, onUpsert, onDelete }: CostsPageProps) {
           <h1 className="text-2xl font-semibold text-stone-900">Costs</h1>
           <p className="mt-1 text-sm text-stone-500">
             Bottle cost + size per perfume. This drives the profit shown on the
-            Order page (cost-per-ml = bottle cost ÷ bottle size).
+            Order page (cost-per-ml = bottle cost ÷ bottle size). Rows marked{" "}
+            <span className="font-medium">In inventory</span> are two-way synced
+            with the Inventory tab — editing the cost or name here updates the
+            perfume too.
           </p>
         </div>
         <Button size="sm" onClick={openAdd}>
@@ -186,11 +201,12 @@ export function CostsPage({ costCatalog, onUpsert, onDelete }: CostsPageProps) {
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <table className="w-full min-w-[40rem] text-sm">
+        <table className="w-full min-w-[44rem] text-sm">
           <thead>
             <tr className="border-b border-stone-100 bg-stone-50/80">
               <th className="px-4 py-3 text-left font-medium text-stone-500">Brand</th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">Perfume</th>
+              <th className="px-4 py-3 text-left font-medium text-stone-500">Status</th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">Bottle cost</th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">Bottle size</th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">Cost / ml</th>
@@ -200,7 +216,7 @@ export function CostsPage({ costCatalog, onUpsert, onDelete }: CostsPageProps) {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-12 text-center text-stone-400">
+                <td colSpan={7} className="py-12 text-center text-stone-400">
                   No cost entries found.
                 </td>
               </tr>
@@ -208,16 +224,39 @@ export function CostsPage({ costCatalog, onUpsert, onDelete }: CostsPageProps) {
               filtered.map((c) => {
                 const isEditing = editingKey === c.key;
                 const isConfirming = confirmDeleteKey === c.key;
+                const linkedPerfume =
+                  c.perfumeId != null ? perfumeById.get(c.perfumeId) : undefined;
+                const isLinked = linkedPerfume !== undefined;
+                const statusCell = isLinked ? (
+                  <span
+                    className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                    title={`Synced with "${linkedPerfume.name}" (${linkedPerfume.perfumeCode}) in Inventory`}
+                  >
+                    In inventory · {linkedPerfume.perfumeCode}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-500">
+                    Not tracked
+                  </span>
+                );
 
                 if (isEditing) {
                   return (
                     <tr key={c.key} className="border-b border-stone-100 bg-amber-50/40 last:border-0">
                       <td className="px-3 py-2">
-                        <Input value={brand} onChange={(e) => setBrand(e.target.value)} className="h-8 px-2 text-sm" aria-label="Brand" />
+                        <Input
+                          value={brand}
+                          onChange={(e) => setBrand(e.target.value)}
+                          className="h-8 px-2 text-sm"
+                          aria-label="Brand"
+                          disabled={isLinked}
+                          title={isLinked ? "Brand comes from Inventory — rename it on the Inventory tab." : undefined}
+                        />
                       </td>
                       <td className="px-3 py-2">
                         <Input value={perfume} onChange={(e) => setPerfume(e.target.value)} className="h-8 px-2 text-sm" aria-label="Perfume" />
                       </td>
+                      <td className="px-3 py-2">{statusCell}</td>
                       <td className="px-3 py-2">
                         <Input type="number" min="0" value={costStr} onChange={(e) => setCostStr(e.target.value)} className="h-8 w-24 px-2 text-sm" aria-label="Bottle cost" />
                       </td>
@@ -257,6 +296,7 @@ export function CostsPage({ costCatalog, onUpsert, onDelete }: CostsPageProps) {
                   <tr key={c.key} className="border-b border-stone-100 last:border-0">
                     <td className="px-4 py-3 text-stone-600">{c.brand !== "" ? c.brand : "—"}</td>
                     <td className="px-4 py-3 font-medium text-stone-900">{c.perfume}</td>
+                    <td className="px-4 py-3">{statusCell}</td>
                     <td className="px-4 py-3 text-stone-700">{formatCurrency(c.bottleCost)}</td>
                     <td className="px-4 py-3 text-stone-700">{c.bottleMl} ml</td>
                     <td className="px-4 py-3 text-stone-700">{formatCurrency(costPerMl(c))}</td>
@@ -282,15 +322,17 @@ export function CostsPage({ costCatalog, onUpsert, onDelete }: CostsPageProps) {
                           <Button size="icon" variant="ghost" aria-label={`Edit ${c.perfume}`} onClick={() => startEdit(c)}>
                             <Pencil className="size-3.5" aria-hidden />
                           </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            aria-label={`Delete ${c.perfume}`}
-                            className="text-red-400 hover:bg-red-50 hover:text-red-600"
-                            onClick={() => setConfirmDeleteKey(c.key)}
-                          >
-                            <Trash2 className="size-3.5" aria-hidden />
-                          </Button>
+                          {!isLinked && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              aria-label={`Delete ${c.perfume}`}
+                              className="text-red-400 hover:bg-red-50 hover:text-red-600"
+                              onClick={() => setConfirmDeleteKey(c.key)}
+                            >
+                              <Trash2 className="size-3.5" aria-hidden />
+                            </Button>
+                          )}
                         </div>
                       )}
                     </td>

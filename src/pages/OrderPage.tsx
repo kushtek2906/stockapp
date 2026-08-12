@@ -30,7 +30,7 @@ import {
   buildCostIndex,
   computeOrderProfit,
   lineProfit,
-  lookupCost,
+  lookupCostForItem,
   type CostIndex,
 } from "../lib/profit";
 import {
@@ -219,7 +219,12 @@ function OrderItemRow({
   const meta = STATUS_META[item.status];
   const pc =
     item.chosen !== null
-      ? lookupCost(costIndex, item.chosen.brand, item.chosen.perfume)
+      ? lookupCostForItem(
+          costIndex,
+          item.linkedPerfumeId,
+          item.chosen.brand,
+          item.chosen.perfume,
+        )
       : null;
   const effMl = effectiveMl(item);
   const profit =
@@ -463,7 +468,12 @@ export function OrderPage({
           unitPrice: it.unitPrice as number,
           size: effectiveMl(it) as number,
           pc: it.chosen
-            ? lookupCost(costIndex, it.chosen.brand, it.chosen.perfume)
+            ? lookupCostForItem(
+                costIndex,
+                it.linkedPerfumeId,
+                it.chosen.brand,
+                it.chosen.perfume,
+              )
             : null,
         })),
         revenue,
