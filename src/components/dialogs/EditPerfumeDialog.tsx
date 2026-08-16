@@ -12,8 +12,8 @@ import { Label } from "../ui/Label";
 
 const schema = z.object({
   name: z.string().min(1, "Perfume name is required").max(100),
-  totalMl: z.number({ error: "Must be a number > 0" }).positive("Must be > 0"),
-  costPrice: z
+  bottleMl: z.number({ error: "Must be a number > 0" }).positive("Must be > 0"),
+  bottleCost: z
     .number({ error: "Must be a number ≥ 0" })
     .nonnegative("Must be ≥ 0"),
   purchaseDate: z.string().min(1, "Select a date"),
@@ -47,8 +47,8 @@ export function EditPerfumeDialog({
     resolver: zodResolver(schema),
     defaultValues: {
       name: perfume.name,
-      totalMl: perfume.totalMl,
-      costPrice: perfume.costPrice,
+      bottleMl: perfume.bottleMl,
+      bottleCost: perfume.bottleCost,
       purchaseDate: perfume.purchaseDate,
     },
   });
@@ -57,8 +57,8 @@ export function EditPerfumeDialog({
     if (open) {
       reset({
         name: perfume.name,
-        totalMl: perfume.totalMl,
-        costPrice: perfume.costPrice,
+        bottleMl: perfume.bottleMl,
+        bottleCost: perfume.bottleCost,
         purchaseDate: perfume.purchaseDate,
       });
       setImageUrl(perfume.imageUrl);
@@ -133,27 +133,31 @@ export function EditPerfumeDialog({
                   type="number"
                   min="1"
                   step="0.1"
-                  {...register("totalMl", { valueAsNumber: true })}
+                  {...register("bottleMl", { valueAsNumber: true })}
                 />
-                {errors.totalMl !== undefined && (
+                <p className="text-xs text-stone-400">
+                  Size of one bottle — not how much is left. To change stock,
+                  click the ml figure in the inventory table.
+                </p>
+                {errors.bottleMl !== undefined && (
                   <p className="text-xs text-red-500" role="alert">
-                    {errors.totalMl.message}
+                    {errors.bottleMl.message}
                   </p>
                 )}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="edit-pfm-cost">Cost Price (₹)</Label>
+                <Label htmlFor="edit-pfm-cost">Cost per bottle (₹)</Label>
                 <Input
                   id="edit-pfm-cost"
                   type="number"
                   min="0"
                   step="0.01"
-                  {...register("costPrice", { valueAsNumber: true })}
+                  {...register("bottleCost", { valueAsNumber: true })}
                 />
-                {errors.costPrice !== undefined && (
+                {errors.bottleCost !== undefined && (
                   <p className="text-xs text-red-500" role="alert">
-                    {errors.costPrice.message}
+                    {errors.bottleCost.message}
                   </p>
                 )}
               </div>

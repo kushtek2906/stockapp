@@ -10,15 +10,17 @@ export interface Perfume {
   perfumeCode: string;
   brandId: string;
   name: string;
-  /** Original purchased volume (the bottle size at purchase). Set when the
-   * perfume is added; feeds the "perfumes purchased" metric. NOT used to derive
-   * current stock. */
-  totalMl: number;
+  /** Size of ONE bottle, in ml — NOT a quantity. The single source of truth for
+   * bottle size: cost-per-ml (`bottleCost / bottleMl`) drives order profit and
+   * every pricing margin. How much you actually have is `stockMl`. */
+  bottleMl: number;
+  /** Cost of ONE bottle, in INR. Single source of truth for cost. */
+  bottleCost: number;
   /** Current stock in ml — the source of truth for "remaining". Mutable: set
    * absolutely from the stock editor, decremented by sales/orders, and allowed
-   * to go negative so oversell stays visible. */
+   * to go negative so oversell stays visible. May exceed `bottleMl` when more
+   * than one bottle is held. */
   stockMl: number;
-  costPrice: number;
   purchaseDate: string;
   imageUrl?: string;
 }
@@ -136,22 +138,6 @@ export interface Order {
 }
 
 /**
- * Cost reference for one perfume — the full-bottle cost and size used to derive
- * cost-per-ml for order profit. Sourced from the cost PDF + master sheets, stored
- * in the DB, and editable in-app. `key` is `normalizeName(brand + " " + perfume)`.
- */
-export interface PerfumeCost {
-  key: string;
-  brand: string;
-  perfume: string;
-  bottleCost: number;
-  bottleMl: number;
-  /** Inventory link. Set → this row IS the cost of that perfume (name/key/cost
-   * kept in sync both ways). Null/absent → untracked reference entry. */
-  perfumeId?: string | null;
-}
-
-/**
  * App-owned selling prices for a perfume — an editable overlay on top of the
  * read-only Google Sheet catalog. When a size is present here it wins over the
  * sheet price (order pricing, profit, and the published customer sheet all read
@@ -174,8 +160,6 @@ export interface InventoryStore {
   sales: Sale[];
   orders: Order[];
   auditLog: AuditEntry[];
-  /** Per-perfume bottle cost + size, powering order profit. */
-  costCatalog: PerfumeCost[];
   /** App-owned selling-price overrides (overlay on the read-only sheet). */
   pricebook: PerfumePrice[];
 }

@@ -1,212 +1,163 @@
-import { Check, Coins, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Check, Coins, Pencil, Search, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
-import { Label } from "../components/ui/Label";
-import { costPerMl } from "../lib/profit";
-import { formatCurrency } from "../lib/utils";
-import type { Perfume, PerfumeCost } from "../types";
+import { costPerMl, hasCostData } from "../lib/profit";
+import { cn, formatCurrency } from "../lib/utils";
+import type { Brand, Perfume } from "../types";
 
 interface CostsPageProps {
-  costCatalog: PerfumeCost[];
-  /** Inventory, to show which rows are linked (and lock their brand/delete). */
   perfumes: Perfume[];
-  onUpsert: (
-    originalKey: string | null,
-    input: { brand: string; perfume: string; bottleCost: number; bottleMl: number },
+  brands: Brand[];
+  /** Writes straight to the perfume — there is no second copy of these values. */
+  onSetCost: (
+    perfumeId: string,
+    input: { name?: string; bottleCost: number; bottleMl: number },
   ) => void;
-  onDelete: (key: string) => void;
 }
 
-/** Validate + hand off; returns false (and toasts) if the row is invalid. */
-function commit(
-  onUpsert: CostsPageProps["onUpsert"],
-  originalKey: string | null,
-  brand: string,
-  perfume: string,
-  costStr: string,
-  mlStr: string,
-): boolean {
-  const cost = Number(costStr);
-  const ml = Number(mlStr);
-  if (perfume.trim() === "") {
-    toast.error("Enter a perfume name.");
-    return false;
-  }
-  if (!Number.isFinite(cost) || cost < 0) {
-    toast.error("Bottle cost must be 0 or more.");
-    return false;
-  }
-  if (!Number.isFinite(ml) || ml <= 0) {
-    toast.error("Bottle size must be greater than 0.");
-    return false;
-  }
-  onUpsert(originalKey, { brand, perfume, bottleCost: cost, bottleMl: ml });
-  return true;
-}
-
-export function CostsPage({
-  costCatalog,
-  perfumes,
-  onUpsert,
-  onDelete,
-}: CostsPageProps) {
+export function CostsPage({ perfumes, brands, onSetCost }: CostsPageProps) {
   const [query, setQuery] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+  const [onlyMissing, setOnlyMissing] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Shared field state — used by the Add form OR the inline-edit row (one at a time).
-  const [brand, setBrand] = useState("");
-  const [perfume, setPerfume] = useState("");
+  // Draft state for the row being edited (one at a time).
+  const [name, setName] = useState("");
   const [costStr, setCostStr] = useState("");
   const [mlStr, setMlStr] = useState("");
 
-  const reset = () => {
-    setBrand("");
-    setPerfume("");
-    setCostStr("");
-    setMlStr("");
+  const brandNameById = useMemo(
+    () => new Map(brands.map((b) => [b.brandId, b.name])),
+    [brands],
+  );
+
+  const startEdit = (p: Perfume) => {
+    setEditingId(p.perfumeId);
+    setName(p.name);
+    setCostStr(String(p.bottleCost));
+    setMlStr(String(p.bottleMl));
   };
 
-  const openAdd = () => {
-    setEditingKey(null);
-    setAdding(true);
-    reset();
+  const cancel = () => setEditingId(null);
+
+  const save = (p: Perfume) => {
+    const bottleCost = Number(costStr);
+    const bottleMl = Number(mlStr);
+    if (name.trim() === "") {
+      toast.error("Enter a perfume name.");
+      return;
+    }
+    if (!Number.isFinite(bottleCost) || bottleCost < 0) {
+      toast.error("Bottle cost must be 0 or more.");
+      return;
+    }
+    if (!Number.isFinite(bottleMl) || bottleMl <= 0) {
+      toast.error("Bottle size must be greater than 0.");
+      return;
+    }
+    onSetCost(p.perfumeId, { name, bottleCost, bottleMl });
+    setEditingId(null);
   };
 
-  const startEdit = (c: PerfumeCost) => {
-    setAdding(false);
-    setConfirmDeleteKey(null);
-    setEditingKey(c.key);
-    setBrand(c.brand);
-    setPerfume(c.perfume);
-    setCostStr(String(c.bottleCost));
-    setMlStr(String(c.bottleMl));
-  };
-
-  const cancel = () => {
-    setAdding(false);
-    setEditingKey(null);
-    reset();
-  };
-
-  const saveAdd = () => {
-    if (commit(onUpsert, null, brand, perfume, costStr, mlStr)) cancel();
-  };
-  const saveEdit = () => {
-    if (commit(onUpsert, editingKey, brand, perfume, costStr, mlStr)) cancel();
-  };
-
-  const perfumeById = useMemo(
-    () => new Map(perfumes.map((p) => [p.perfumeId, p])),
+  const missingCount = useMemo(
+    () => perfumes.filter((p) => !hasCostData(p)).length,
     [perfumes],
   );
 
-  const filtered = useMemo(() => {
+  const rows = useMemo(() => {
     const q = query.toLowerCase().trim();
-    const list =
-      q === ""
-        ? costCatalog
-        : costCatalog.filter(
-            (c) =>
-              c.perfume.toLowerCase().includes(q) ||
-              c.brand.toLowerCase().includes(q),
-          );
+    const list = perfumes.filter((p) => {
+      if (onlyMissing && hasCostData(p)) return false;
+      if (q === "") return true;
+      const brand = (brandNameById.get(p.brandId) ?? "").toLowerCase();
+      return (
+        p.name.toLowerCase().includes(q) ||
+        brand.includes(q) ||
+        p.perfumeCode.toLowerCase().includes(q)
+      );
+    });
     return [...list].sort(
       (a, b) =>
-        a.brand.localeCompare(b.brand) || a.perfume.localeCompare(b.perfume),
+        (brandNameById.get(a.brandId) ?? "").localeCompare(
+          brandNameById.get(b.brandId) ?? "",
+        ) || a.name.localeCompare(b.name),
     );
-  }, [costCatalog, query]);
+  }, [perfumes, brandNameById, query, onlyMissing]);
 
-  const livePerMl =
+  // Live cost/ml preview while editing.
+  const draftPerMl =
     Number(costStr) > 0 && Number(mlStr) > 0
       ? Number(costStr) / Number(mlStr)
       : null;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-stone-900">Costs</h1>
-          <p className="mt-1 text-sm text-stone-500">
-            Bottle cost + size per perfume. This drives the profit shown on the
-            Order page (cost-per-ml = bottle cost ÷ bottle size). Rows marked{" "}
-            <span className="font-medium">In inventory</span> are two-way synced
-            with the Inventory tab — editing the cost or name here updates the
-            perfume too.
-          </p>
-        </div>
-        <Button size="sm" onClick={openAdd}>
-          <Plus className="size-3.5" aria-hidden />
-          Add cost
-        </Button>
+      <div>
+        <h1 className="text-2xl font-semibold text-stone-900">Costs</h1>
+        <p className="mt-1 text-sm text-stone-500">
+          Bottle cost and bottle size for every perfume in your inventory. These
+          two numbers live on the perfume itself, so a change here is the same
+          change the Inventory tab, order profit and Pricing margins all read —
+          cost-per-ml is simply cost ÷ size.
+        </p>
       </div>
 
-      {adding && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-sm font-medium text-stone-800">Add a perfume cost</p>
-            <Button variant="ghost" size="icon" aria-label="Close form" onClick={cancel}>
-              <X className="size-4" aria-hidden />
-            </Button>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="cost-brand">Brand</Label>
-              <Input id="cost-brand" value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="e.g. Afnan" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cost-perfume">Perfume</Label>
-              <Input id="cost-perfume" value={perfume} onChange={(e) => setPerfume(e.target.value)} placeholder="e.g. 9PM Rebel" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cost-cost">Bottle cost (₹)</Label>
-              <Input id="cost-cost" type="number" min="0" value={costStr} onChange={(e) => setCostStr(e.target.value)} placeholder="2600" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cost-ml">Bottle size (ml)</Label>
-              <Input
-                id="cost-ml"
-                type="number"
-                min="1"
-                value={mlStr}
-                onChange={(e) => setMlStr(e.target.value)}
-                placeholder="100"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveAdd();
-                }}
-              />
-            </div>
-          </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <Button variant="outline" onClick={cancel}>
-              Cancel
-            </Button>
-            <Button onClick={saveAdd}>Save</Button>
-          </div>
+      {missingCount > 0 && (
+        <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm">
+          <TriangleAlert
+            className="mt-0.5 size-4 shrink-0 text-amber-500"
+            aria-hidden
+          />
+          <p className="text-amber-800">
+            <span className="font-medium">
+              {missingCount} perfume{missingCount !== 1 ? "s have" : " has"} no
+              usable cost.
+            </span>{" "}
+            Their decants show “cost?” instead of profit — nothing is counted as
+            free.{" "}
+            <button
+              type="button"
+              onClick={() => setOnlyMissing(true)}
+              className="font-medium underline underline-offset-2"
+            >
+              Show them
+            </button>
+          </p>
         </div>
       )}
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" aria-hidden />
-        <Input
-          type="search"
-          placeholder="Search by perfume or brand…"
-          className="pl-9"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative max-w-sm flex-1">
+          <Search
+            className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400"
+            aria-hidden
+          />
+          <Input
+            type="search"
+            placeholder="Search by perfume, brand, or code…"
+            className="pl-9"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-stone-600 select-none">
+          <input
+            type="checkbox"
+            checked={onlyMissing}
+            onChange={(e) => setOnlyMissing(e.target.checked)}
+            className="size-3.5 accent-amber-700"
+          />
+          Only missing a cost
+        </label>
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
-        <table className="w-full min-w-[44rem] text-sm">
+        <table className="w-full min-w-[42rem] text-sm">
           <thead>
             <tr className="border-b border-stone-100 bg-stone-50/80">
               <th className="px-4 py-3 text-left font-medium text-stone-500">Brand</th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">Perfume</th>
-              <th className="px-4 py-3 text-left font-medium text-stone-500">Status</th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">Bottle cost</th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">Bottle size</th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">Cost / ml</th>
@@ -214,51 +165,48 @@ export function CostsPage({
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-stone-400">
-                  No cost entries found.
+                <td colSpan={6} className="py-12 text-center text-stone-400">
+                  {perfumes.length === 0
+                    ? "No perfumes yet — add them on the Inventory tab."
+                    : "No perfumes match."}
                 </td>
               </tr>
             ) : (
-              filtered.map((c) => {
-                const isEditing = editingKey === c.key;
-                const isConfirming = confirmDeleteKey === c.key;
-                const linkedPerfume =
-                  c.perfumeId != null ? perfumeById.get(c.perfumeId) : undefined;
-                const isLinked = linkedPerfume !== undefined;
-                const statusCell = isLinked ? (
-                  <span
-                    className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
-                    title={`Synced with "${linkedPerfume.name}" (${linkedPerfume.perfumeCode}) in Inventory`}
-                  >
-                    In inventory · {linkedPerfume.perfumeCode}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-500">
-                    Not tracked
-                  </span>
-                );
+              rows.map((p) => {
+                const isEditing = editingId === p.perfumeId;
+                const perMl = costPerMl(p);
 
                 if (isEditing) {
                   return (
-                    <tr key={c.key} className="border-b border-stone-100 bg-amber-50/40 last:border-0">
+                    <tr
+                      key={p.perfumeId}
+                      className="border-b border-stone-100 bg-amber-50/40 last:border-0"
+                    >
+                      <td className="px-4 py-2 text-stone-500">
+                        {brandNameById.get(p.brandId) ?? "—"}
+                        <span className="block text-xs text-stone-400">
+                          rename on Inventory
+                        </span>
+                      </td>
                       <td className="px-3 py-2">
                         <Input
-                          value={brand}
-                          onChange={(e) => setBrand(e.target.value)}
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
                           className="h-8 px-2 text-sm"
-                          aria-label="Brand"
-                          disabled={isLinked}
-                          title={isLinked ? "Brand comes from Inventory — rename it on the Inventory tab." : undefined}
+                          aria-label="Perfume name"
                         />
                       </td>
                       <td className="px-3 py-2">
-                        <Input value={perfume} onChange={(e) => setPerfume(e.target.value)} className="h-8 px-2 text-sm" aria-label="Perfume" />
-                      </td>
-                      <td className="px-3 py-2">{statusCell}</td>
-                      <td className="px-3 py-2">
-                        <Input type="number" min="0" value={costStr} onChange={(e) => setCostStr(e.target.value)} className="h-8 w-24 px-2 text-sm" aria-label="Bottle cost" />
+                        <Input
+                          type="number"
+                          min="0"
+                          value={costStr}
+                          onChange={(e) => setCostStr(e.target.value)}
+                          className="h-8 w-24 px-2 text-sm"
+                          aria-label="Bottle cost"
+                        />
                       </td>
                       <td className="px-3 py-2">
                         <Input
@@ -267,7 +215,7 @@ export function CostsPage({
                           value={mlStr}
                           onChange={(e) => setMlStr(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") saveEdit();
+                            if (e.key === "Enter") save(p);
                             if (e.key === "Escape") cancel();
                           }}
                           className="h-8 w-20 px-2 text-sm"
@@ -275,11 +223,11 @@ export function CostsPage({
                         />
                       </td>
                       <td className="px-4 py-2 text-stone-500">
-                        {livePerMl !== null ? formatCurrency(livePerMl) : "—"}
+                        {draftPerMl !== null ? formatCurrency(draftPerMl) : "—"}
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
-                          <Button size="sm" onClick={saveEdit} aria-label={`Save ${c.perfume}`}>
+                          <Button size="sm" onClick={() => save(p)}>
                             <Check className="size-3.5" aria-hidden />
                             Save
                           </Button>
@@ -293,48 +241,46 @@ export function CostsPage({
                 }
 
                 return (
-                  <tr key={c.key} className="border-b border-stone-100 last:border-0">
-                    <td className="px-4 py-3 text-stone-600">{c.brand !== "" ? c.brand : "—"}</td>
-                    <td className="px-4 py-3 font-medium text-stone-900">{c.perfume}</td>
-                    <td className="px-4 py-3">{statusCell}</td>
-                    <td className="px-4 py-3 text-stone-700">{formatCurrency(c.bottleCost)}</td>
-                    <td className="px-4 py-3 text-stone-700">{c.bottleMl} ml</td>
-                    <td className="px-4 py-3 text-stone-700">{formatCurrency(costPerMl(c))}</td>
+                  <tr
+                    key={p.perfumeId}
+                    className={cn(
+                      "border-b border-stone-100 last:border-0",
+                      !hasCostData(p) && "bg-amber-50/50",
+                    )}
+                  >
+                    <td className="px-4 py-3 text-stone-600">
+                      {brandNameById.get(p.brandId) ?? "—"}
+                    </td>
                     <td className="px-4 py-3">
-                      {isConfirming ? (
-                        <div className="flex items-center gap-1">
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => {
-                              onDelete(c.key);
-                              setConfirmDeleteKey(null);
-                            }}
-                          >
-                            Confirm
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => setConfirmDeleteKey(null)}>
-                            Cancel
-                          </Button>
-                        </div>
+                      <p className="font-medium text-stone-900">{p.name}</p>
+                      <p className="font-mono text-xs text-amber-700">
+                        {p.perfumeCode}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3 text-stone-700">
+                      {p.bottleCost > 0 ? (
+                        formatCurrency(p.bottleCost)
                       ) : (
-                        <div className="flex items-center gap-1">
-                          <Button size="icon" variant="ghost" aria-label={`Edit ${c.perfume}`} onClick={() => startEdit(c)}>
-                            <Pencil className="size-3.5" aria-hidden />
-                          </Button>
-                          {!isLinked && (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              aria-label={`Delete ${c.perfume}`}
-                              className="text-red-400 hover:bg-red-50 hover:text-red-600"
-                              onClick={() => setConfirmDeleteKey(c.key)}
-                            >
-                              <Trash2 className="size-3.5" aria-hidden />
-                            </Button>
-                          )}
-                        </div>
+                        <span className="text-amber-700">not set</span>
                       )}
+                    </td>
+                    <td className="px-4 py-3 text-stone-700">{p.bottleMl} ml</td>
+                    <td className="px-4 py-3 text-stone-700">
+                      {perMl !== null ? (
+                        formatCurrency(perMl)
+                      ) : (
+                        <span className="text-amber-700">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Edit ${p.name}`}
+                        onClick={() => startEdit(p)}
+                      >
+                        <Pencil className="size-3.5" aria-hidden />
+                      </Button>
                     </td>
                   </tr>
                 );
@@ -346,7 +292,8 @@ export function CostsPage({
 
       <p className="flex items-center gap-1.5 text-xs text-stone-400">
         <Coins className="size-3.5" aria-hidden />
-        {filtered.length} of {costCatalog.length} perfumes with cost data
+        {rows.length} of {perfumes.length} perfumes
+        {missingCount > 0 ? ` · ${missingCount} without a usable cost` : ""}
       </p>
     </div>
   );

@@ -13,8 +13,8 @@ export interface PerfumePreviewTarget {
   brand: string;
   imageUrl?: string;
   remainingMl: number | null;
-  totalMl: number | null;
-  costPrice: number | null;
+  bottleMl: number | null;
+  bottleCost: number | null;
   lineSize: DecantSize | null;
   lineMl: number;
   lineUnitPrice: number;
@@ -109,10 +109,17 @@ export function PerfumePreviewDialog({
                 </span>
               </div>
             )}
-            {target.costPrice !== null && target.costPrice > 0 && (
+            {target.bottleCost !== null && target.bottleCost > 0 && (
               <div className="flex items-center justify-between">
-                <span className="text-stone-500">Cost price</span>
-                <span className="text-stone-700">{formatCurrency(target.costPrice)}</span>
+                <span className="text-stone-500">Bottle cost</span>
+                <span className="text-stone-700">
+                  {formatCurrency(target.bottleCost)}
+                  {target.bottleMl !== null && target.bottleMl > 0 && (
+                    <span className="ml-1 text-xs text-stone-400">
+                      / {target.bottleMl}ml
+                    </span>
+                  )}
+                </span>
               </div>
             )}
             <div className="flex items-center justify-between border-t border-stone-100 pt-2">

@@ -146,7 +146,7 @@ export function ImportDialog({
   "brands": [{ "name": "Tom Ford", "brandCode": "TF" }],
   "perfumes": [{
     "brandCode": "TF", "name": "Oud Wood",
-    "totalMl": 100, "costPrice": 8000,
+    "bottleMl": 100, "bottleCost": 8000,
     "purchaseDate": "2026-04-30"
   }]
 }`}</pre>

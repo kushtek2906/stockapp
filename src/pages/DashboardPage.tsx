@@ -1,33 +1,23 @@
-import { Boxes, DollarSign, Package, ShoppingCart, TrendingUp } from "lucide-react";
+import { DollarSign, ShoppingCart, TrendingUp, Wallet } from "lucide-react";
 import { useMemo } from "react";
 import logo from "../assets/logo.png";
 import { WeeklySalesChart } from "../components/dashboard/WeeklySalesChart";
 import { StatsCard } from "../components/dashboard/StatsCard";
 import { formatCurrency } from "../lib/utils";
-import type { Brand, Perfume, Sale } from "../types";
+import type { Sale } from "../types";
 
 interface DashboardPageProps {
-  perfumes: Perfume[];
-  brands: Brand[];
   sales: Sale[];
   totalInvestment: number;
-  totalPurchasedCount: number;
-  totalPurchasedMl: number;
   totalRevenue: number;
   totalProfit: number;
-  remainingMlMap: Record<string, number>;
 }
 
 export function DashboardPage({
-  perfumes,
-  brands,
   sales,
   totalInvestment,
-  totalPurchasedCount,
-  totalPurchasedMl,
   totalRevenue,
   totalProfit,
-  remainingMlMap,
 }: DashboardPageProps) {
   const weekSales = useMemo(() => {
     const cutoff = new Date();
@@ -39,11 +29,6 @@ export function DashboardPage({
   const weekRevenue = useMemo(
     () => weekSales.reduce((sum, s) => sum + s.totalPrice, 0),
     [weekSales],
-  );
-
-  const totalMlRemaining = useMemo(
-    () => Object.values(remainingMlMap).reduce((sum, ml) => sum + ml, 0),
-    [remainingMlMap],
   );
 
   return (
@@ -62,16 +47,9 @@ export function DashboardPage({
         <StatsCard
           label="Total Investment"
           value={formatCurrency(totalInvestment)}
-          icon={<DollarSign className="size-5" aria-hidden />}
+          icon={<Wallet className="size-5" aria-hidden />}
           accent="violet"
           trend="Total invested to date"
-        />
-        <StatsCard
-          label="Perfumes Purchased"
-          value={`${totalPurchasedCount} perfumes`}
-          icon={<Package className="size-5" aria-hidden />}
-          accent="violet"
-          trend={`${totalPurchasedMl.toFixed(0)} ml bought`}
         />
         <StatsCard
           label="Total Revenue"
@@ -93,13 +71,6 @@ export function DashboardPage({
           icon={<DollarSign className="size-5" aria-hidden />}
           accent="amber"
           trend={`${weekSales.length} sales this week`}
-        />
-        <StatsCard
-          label="Stock Remaining"
-          value={`${totalMlRemaining.toFixed(0)} ml`}
-          icon={<Boxes className="size-5" aria-hidden />}
-          accent="violet"
-          trend={`${perfumes.length} perfumes · ${brands.length} brands`}
         />
       </div>
 

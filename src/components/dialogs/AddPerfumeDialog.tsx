@@ -15,8 +15,8 @@ import { Label } from "../ui/Label";
 const schema = z.object({
   brandId: z.string().min(1, "Select a brand"),
   name: z.string().min(1, "Perfume name is required").max(100),
-  totalMl: z.number({ error: "Must be a number > 0" }).positive("Must be > 0"),
-  costPrice: z
+  bottleMl: z.number({ error: "Must be a number > 0" }).positive("Must be > 0"),
+  bottleCost: z
     .number({ error: "Must be a number ≥ 0" })
     .nonnegative("Must be ≥ 0"),
   purchaseDate: z.string().min(1, "Select a date"),
@@ -172,28 +172,35 @@ export function AddPerfumeDialog({
                   min="1"
                   step="0.1"
                   placeholder="100"
-                  {...register("totalMl", { valueAsNumber: true })}
+                  {...register("bottleMl", { valueAsNumber: true })}
                 />
-                {errors.totalMl !== undefined && (
+                <p className="text-xs text-stone-400">
+                  Size of one bottle. Opening stock starts here; adjust it later
+                  from the inventory table.
+                </p>
+                {errors.bottleMl !== undefined && (
                   <p className="text-xs text-red-500" role="alert">
-                    {errors.totalMl.message}
+                    {errors.bottleMl.message}
                   </p>
                 )}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="pfm-cost">Cost Price (₹)</Label>
+                <Label htmlFor="pfm-cost">Cost per bottle (₹)</Label>
                 <Input
                   id="pfm-cost"
                   type="number"
                   min="0"
                   step="0.01"
                   placeholder="5000"
-                  {...register("costPrice", { valueAsNumber: true })}
+                  {...register("bottleCost", { valueAsNumber: true })}
                 />
-                {errors.costPrice !== undefined && (
+                <p className="text-xs text-stone-400">
+                  Drives cost-per-ml, so it sets every profit and margin figure.
+                </p>
+                {errors.bottleCost !== undefined && (
                   <p className="text-xs text-red-500" role="alert">
-                    {errors.costPrice.message}
+                    {errors.bottleCost.message}
                   </p>
                 )}
               </div>

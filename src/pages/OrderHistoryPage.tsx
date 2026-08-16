@@ -63,8 +63,8 @@ export function OrderHistoryPage({
       imageUrl: p?.imageUrl,
       remainingMl:
         it.perfumeId !== null ? (remainingMlMap[it.perfumeId] ?? null) : null,
-      totalMl: p?.totalMl ?? null,
-      costPrice: p?.costPrice ?? null,
+      bottleMl: p?.bottleMl ?? null,
+      bottleCost: p?.bottleCost ?? null,
       lineSize: it.size,
       lineMl: it.mlSold,
       lineUnitPrice: it.unitPrice,

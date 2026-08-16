@@ -5,13 +5,43 @@ export const importBrandSchema = z.object({
   brandCode: z.string().min(1).max(6, "Brand code max 6 chars"),
 });
 
-export const importPerfumeSchema = z.object({
-  brandCode: z.string().min(1),
-  name: z.string().min(1, "Perfume name is required"),
-  totalMl: z.number().positive("totalMl must be positive"),
-  costPrice: z.number().nonnegative("costPrice must be ≥ 0"),
-  purchaseDate: z.string().min(1),
-});
+const bottleMlField = z.number().positive("bottleMl must be positive");
+const bottleCostField = z.number().nonnegative("bottleCost must be ≥ 0");
+
+/**
+ * `totalMl` / `costPrice` are the pre-unification field names, still accepted so
+ * previously exported files keep importing. New files should use `bottleMl` and
+ * `bottleCost` — the size and cost of ONE bottle.
+ */
+export const importPerfumeSchema = z
+  .object({
+    brandCode: z.string().min(1),
+    name: z.string().min(1, "Perfume name is required"),
+    bottleMl: bottleMlField.optional(),
+    totalMl: bottleMlField.optional(),
+    bottleCost: bottleCostField.optional(),
+    costPrice: bottleCostField.optional(),
+    purchaseDate: z.string().min(1),
+  })
+  .transform((p, ctx) => {
+    const bottleMl = p.bottleMl ?? p.totalMl;
+    const bottleCost = p.bottleCost ?? p.costPrice;
+    if (bottleMl === undefined) {
+      ctx.addIssue({ code: "custom", message: '"bottleMl" is required' });
+      return z.NEVER;
+    }
+    if (bottleCost === undefined) {
+      ctx.addIssue({ code: "custom", message: '"bottleCost" is required' });
+      return z.NEVER;
+    }
+    return {
+      brandCode: p.brandCode,
+      name: p.name,
+      bottleMl,
+      bottleCost,
+      purchaseDate: p.purchaseDate,
+    };
+  });
 
 export const importSchema = z.object({
   brands: z.array(importBrandSchema).optional(),

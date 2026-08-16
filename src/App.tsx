@@ -24,8 +24,6 @@ export default function App() {
     auditLog,
     remainingMlMap,
     totalInvestment,
-    totalPurchasedCount,
-    totalPurchasedMl,
     totalRevenue,
     totalProfit,
     addBrand,
@@ -42,9 +40,7 @@ export default function App() {
     bulkImport,
     importCatalog,
     clearAllInventory,
-    costCatalog,
-    upsertCost,
-    deleteCost,
+    setPerfumeCost,
     pricebook,
     setPrice,
     orders,
@@ -79,15 +75,10 @@ export default function App() {
     <Layout activePage={activePage} onNavigate={setActivePage}>
       {activePage === "dashboard" && (
         <DashboardPage
-          perfumes={perfumes}
-          brands={brands}
           sales={sales}
           totalInvestment={totalInvestment}
-          totalPurchasedCount={totalPurchasedCount}
-          totalPurchasedMl={totalPurchasedMl}
           totalRevenue={totalRevenue}
           totalProfit={totalProfit}
-          remainingMlMap={remainingMlMap}
         />
       )}
       {activePage === "inventory" && (
@@ -126,7 +117,6 @@ export default function App() {
         <OrderPage
           catalog={effectiveCatalog}
           perfumes={perfumes}
-          costCatalog={costCatalog}
           onConfirmOrder={confirmOrder}
           syncing={syncing}
           lastSynced={lastSynced}
@@ -152,16 +142,14 @@ export default function App() {
       {activePage === "compare" && <ComparisonPage myCatalog={effectiveCatalog} />}
       {activePage === "costs" && (
         <CostsPage
-          costCatalog={costCatalog}
           perfumes={perfumes}
-          onUpsert={upsertCost}
-          onDelete={deleteCost}
+          brands={brands}
+          onSetCost={setPerfumeCost}
         />
       )}
       {activePage === "pricing" && (
         <PricingPage
           catalog={effectiveCatalog}
-          costCatalog={costCatalog}
           perfumes={perfumes}
           brands={brands}
           pricebook={pricebook}

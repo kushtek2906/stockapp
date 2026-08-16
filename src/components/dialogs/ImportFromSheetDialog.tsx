@@ -56,7 +56,7 @@ export function ImportFromSheetDialog({
           byBrandName.get(`${normalizeName(e.brand)}|${normalizeName(e.perfume)}`) ??
           byName.get(normalizeName(e.perfume)) ??
           null;
-        return { brand: e.brand, name: e.perfume, costPrice: cost };
+        return { brand: e.brand, name: e.perfume, bottleCost: cost };
       });
       setResult(onImportCatalog(items));
     } catch (e) {

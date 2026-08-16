@@ -22,10 +22,8 @@ import { loadPrefs } from "../lib/prefs";
 import { publishPrices } from "../lib/publish";
 import {
   ORDER_COSTS,
-  buildCostIndex,
+  buildPerfumeIndex,
   decantPerfumeCost,
-  lookupCost,
-  type CostIndex,
 } from "../lib/profit";
 import { cn } from "../lib/utils";
 import {
@@ -35,14 +33,12 @@ import {
   type DecantCatalogEntry,
   type DecantSize,
   type Perfume,
-  type PerfumeCost,
   type PerfumePrice,
 } from "../types";
 
 interface PricingPageProps {
   catalog: DecantCatalog | null;
-  costCatalog: PerfumeCost[];
-  /** Inventory, for the rows that aren't on the sheet ("local-only"). */
+  /** Inventory — the sole source of bottle cost + size, so of every margin. */
   perfumes: Perfume[];
   brands: Brand[];
   pricebook: PerfumePrice[];
@@ -174,7 +170,6 @@ function PriceCell({
 
 export function PricingPage({
   catalog,
-  costCatalog,
   perfumes,
   brands,
   pricebook,
@@ -189,11 +184,22 @@ export function PricingPage({
   const [publishing, setPublishing] = useState(false);
   const [showProfit, setShowProfit] = useState(false);
 
-  const costIndex = useMemo<CostIndex>(
-    () => buildCostIndex(costCatalog),
-    [costCatalog],
-  );
+  const perfumeById = useMemo(() => buildPerfumeIndex(perfumes), [perfumes]);
   const priceIndex = useMemo(() => buildPriceIndex(pricebook), [pricebook]);
+
+  // Sheet rows carry no perfume id, so they resolve their cost by name — the
+  // same basis the local-only split below uses.
+  const perfumeByName = useMemo(() => {
+    const brandNameById = new Map(brands.map((b) => [b.brandId, b.name]));
+    const byKey = new Map<string, Perfume>();
+    const byName = new Map<string, Perfume>();
+    for (const p of perfumes) {
+      byKey.set(priceKey(brandNameById.get(p.brandId) ?? "", p.name), p);
+      const n = normalizeName(p.name);
+      if (!byName.has(n)) byName.set(n, p);
+    }
+    return { byKey, byName };
+  }, [perfumes, brands]);
 
   // Keys (`${priceKey}|${size}`) of the unpublished cells, for the dirty dots.
   const dirtySet = useMemo(
@@ -275,15 +281,18 @@ export function PricingPage({
     0,
   );
 
+  /** Unit cost of one decant: perfume cost for that volume, plus the ₹25 vial.
+   * Null when the perfume isn't in inventory or has no usable cost. */
   const unitCostFor = (row: PricingRow, size: DecantSize): number | null => {
-    // Local rows read their inventory-linked cost directly; sheet rows keep the
-    // name lookup (which itself prefers id-linked rows on exact key hits).
-    const pc =
-      row.localOnly && row.perfumeId !== null
-        ? (costIndex.byPerfumeId.get(row.perfumeId) ?? null)
-        : lookupCost(costIndex, row.entry.brand, row.entry.perfume);
-    if (pc === null) return null;
-    return decantPerfumeCost(pc, size) + ORDER_COSTS.decantVial;
+    const perfume =
+      row.perfumeId !== null
+        ? (perfumeById.get(row.perfumeId) ?? null)
+        : (perfumeByName.byKey.get(priceKey(row.entry.brand, row.entry.perfume)) ??
+          perfumeByName.byName.get(normalizeName(row.entry.perfume)) ??
+          null);
+    if (perfume === null) return null;
+    const cost = decantPerfumeCost(perfume, size);
+    return cost === null ? null : cost + ORDER_COSTS.decantVial;
   };
 
   const handleCopyCsv = async () => {

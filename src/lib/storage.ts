@@ -1,171 +1,149 @@
-import type { Brand, InventoryStore, PerfumeCost, Perfume } from "../types";
-import costCatalogSeed from "../data/costCatalog.seed.json";
-import { reconcileCostLinks } from "./costSync";
+import type { Brand, InventoryStore, Perfume } from "../types";
+import { orderChargedTotal } from "./order";
 import {
-  buildCostIndex,
+  DEFAULT_BOTTLE_ML,
+  buildPerfumeIndex,
   decantPerfumeCost,
-  lookupCostForItem,
+  lookupPerfume,
   orderProfitFromItems,
 } from "./profit";
 
 const STORAGE_KEY_V2 = "perfume_inventory_v2";
 const STORAGE_KEY_V1 = "perfume_inventory_v1";
 
-/** Bottle cost + size per perfume, generated from the cost PDF + master sheets.
- * Seeds `costCatalog` on first run; editable in-app thereafter. */
-const COST_CATALOG_SEED = costCatalogSeed as PerfumeCost[];
+/** A brand-new install starts empty. Never seed sample rows: the store is shared
+ * and merged across devices, so anything seeded here would be unioned into real
+ * data the first time a load fails and this fallback is used. */
+function emptyStore(): InventoryStore {
+  return {
+    brands: [],
+    perfumes: [],
+    sales: [],
+    orders: [],
+    auditLog: [],
+    pricebook: [],
+  };
+}
 
-const SEED_DATA: InventoryStore = {
-  brands: [
-    { brandId: "brand-001", brandCode: "MMG", name: "Maison Margiela" },
-    { brandId: "brand-002", brandCode: "BYR", name: "Byredo" },
-  ],
-  perfumes: [
-    {
-      perfumeId: "brand-001-pfm-001",
-      perfumeCode: "MMG-001",
-      brandId: "brand-001",
-      name: "Replica Beach Walk",
-      totalMl: 100,
-      stockMl: 70, // 100 purchased − 30 sold in seed sales
-      costPrice: 4500,
-      purchaseDate: "2026-01-15",
-    },
-    {
-      perfumeId: "brand-001-pfm-002",
-      perfumeCode: "MMG-002",
-      brandId: "brand-001",
-      name: "Replica Flower Market",
-      totalMl: 50,
-      stockMl: 45, // 50 − 5
-      costPrice: 3200,
-      purchaseDate: "2026-02-10",
-    },
-    {
-      perfumeId: "brand-002-pfm-001",
-      perfumeCode: "BYR-001",
-      brandId: "brand-002",
-      name: "Bal d'Afrique",
-      totalMl: 100,
-      stockMl: 85, // 100 − 15
-      costPrice: 5800,
-      purchaseDate: "2026-03-01",
-    },
-    {
-      perfumeId: "brand-002-pfm-002",
-      perfumeCode: "BYR-002",
-      brandId: "brand-002",
-      name: "Mojave Ghost",
-      totalMl: 30,
-      stockMl: 22, // 30 − 8
-      costPrice: 4100,
-      purchaseDate: "2026-04-01",
-    },
-  ],
-  sales: [
-    {
-      id: "sale-001",
-      perfumeId: "brand-001-pfm-001",
-      mlSold: 10,
-      date: getTodayMinus(6),
-      totalPrice: 650,
-    },
-    {
-      id: "sale-002",
-      perfumeId: "brand-001-pfm-002",
-      mlSold: 5,
-      date: getTodayMinus(5),
-      totalPrice: 420,
-    },
-    {
-      id: "sale-003",
-      perfumeId: "brand-002-pfm-001",
-      mlSold: 15,
-      date: getTodayMinus(3),
-      totalPrice: 1050,
-    },
-    {
-      id: "sale-004",
-      perfumeId: "brand-002-pfm-002",
-      mlSold: 8,
-      date: getTodayMinus(2),
-      totalPrice: 560,
-    },
-    {
-      id: "sale-005",
-      perfumeId: "brand-001-pfm-001",
-      mlSold: 20,
-      date: getTodayMinus(1),
-      totalPrice: 1300,
-    },
-  ],
-  orders: [],
-  auditLog: [],
-  costCatalog: COST_CATALOG_SEED,
-  pricebook: [],
+// ── legacy shapes, read only by the migration below ──────────────────────────
+
+/** Pre-unification perfume: bottle size and cost were split across the perfume
+ * (`totalMl`/`costPrice`) and a parallel `costCatalog` row. */
+type LegacyPerfume = Perfume & {
+  totalMl?: number;
+  costPrice?: number;
 };
 
+/** Pre-unification cost row. Rows carrying a `perfumeId` were the authority for
+ * every profit and margin number, so they win the migration. */
+interface LegacyCostRow {
+  key: string;
+  bottleCost: number;
+  bottleMl: number;
+  perfumeId?: string | null;
+}
+
+type LegacyStore = Partial<InventoryStore> & { costCatalog?: LegacyCostRow[] };
+
 /**
- * Guarantee every array field exists. Older stores (saved before `orders` was
- * added, or partial data) won't have every key — default them so the app doesn't
- * crash on `store.orders.map(...)` etc.
+ * Bring any stored document up to the current shape.
  *
- * Also backfills `stockMl` on perfumes saved before current stock was stored
- * directly: for those, current stock was `totalMl − Σ mlSold`, so we bake that
- * in once. Unclamped, so any pre-existing oversell is preserved. Idempotent —
- * only perfumes still missing `stockMl` are touched.
+ * The one-way migration: bottle cost and size used to live in two places at
+ * once — on the perfume (`costPrice`/`totalMl`) and on a linked `costCatalog`
+ * row (`bottleCost`/`bottleMl`) — kept loosely in step by a sync layer that
+ * never propagated size. The catalog row is what every profit and margin number
+ * was actually computed from, so it wins; `totalMl` had drifted into holding
+ * remaining stock (already tracked by `stockMl`) and is dropped.
  *
- * And backfills `profit` on past orders (placed before profit tracking): each
- * line's cost is looked up from the cost catalog and the net order profit is
- * computed. Idempotent — only orders still missing `profit` are touched.
+ * Also: backfills `stockMl` for very old records, and backfills `profit` on
+ * orders placed before profit tracking. Idempotent — a store that has already
+ * been migrated passes through untouched.
  */
 export function normalizeStore(
-  raw: Partial<InventoryStore> | null | undefined,
+  raw: LegacyStore | null | undefined,
 ): InventoryStore {
-  const perfumes = raw?.perfumes ?? [];
+  const rawPerfumes = (raw?.perfumes ?? []) as LegacyPerfume[];
   const sales = raw?.sales ?? [];
-  const costCatalog = raw?.costCatalog ?? COST_CATALOG_SEED;
 
-  const migratedPerfumes = perfumes.map((p) => {
-    if (typeof p.stockMl === "number") return p;
-    const sold = sales
-      .filter((s) => s.perfumeId === p.perfumeId)
-      .reduce((sum, s) => sum + s.mlSold, 0);
-    return { ...p, stockMl: p.totalMl - sold };
+  // Linked cost rows, by perfume. First row wins if a merge left duplicates.
+  const costByPerfumeId = new Map<string, LegacyCostRow>();
+  for (const row of raw?.costCatalog ?? []) {
+    if (row.perfumeId != null && !costByPerfumeId.has(row.perfumeId)) {
+      costByPerfumeId.set(row.perfumeId, row);
+    }
+  }
+
+  const perfumes: Perfume[] = rawPerfumes.map((p) => {
+    const row = costByPerfumeId.get(p.perfumeId);
+
+    // The catalog row is the authority; fall back to the perfume's own legacy
+    // fields, then to a default size so cost-per-ml always has a denominator.
+    const bottleMl =
+      typeof p.bottleMl === "number" && p.bottleMl > 0
+        ? p.bottleMl
+        : row !== undefined && row.bottleMl > 0
+          ? row.bottleMl
+          : typeof p.totalMl === "number" && p.totalMl > 0
+            ? p.totalMl
+            : DEFAULT_BOTTLE_ML;
+
+    const bottleCost =
+      typeof p.bottleCost === "number"
+        ? p.bottleCost
+        : (row?.bottleCost ?? p.costPrice ?? 0);
+
+    // Very old records predate stored stock: it was totalMl − Σ sold. Unclamped,
+    // so any pre-existing oversell is preserved.
+    const stockMl =
+      typeof p.stockMl === "number"
+        ? p.stockMl
+        : (p.totalMl ?? 0) -
+          sales
+            .filter((s) => s.perfumeId === p.perfumeId)
+            .reduce((sum, s) => sum + s.mlSold, 0);
+
+    return {
+      perfumeId: p.perfumeId,
+      perfumeCode: p.perfumeCode,
+      brandId: p.brandId,
+      name: p.name,
+      bottleMl,
+      bottleCost,
+      stockMl,
+      purchaseDate: p.purchaseDate,
+      ...(p.imageUrl !== undefined ? { imageUrl: p.imageUrl } : {}),
+    };
   });
 
-  // Standing invariant repair: link cost/price rows to perfumes by id, adopt
-  // catalog costs on first link, and keep names/keys in sync. Runs before the
-  // profit backfill so backfilled costs use the reconciled catalog.
-  const reconciled = reconcileCostLinks({
-    brands: raw?.brands ?? [],
-    perfumes: migratedPerfumes,
-    sales,
-    orders: raw?.orders ?? [],
-    auditLog: raw?.auditLog ?? [],
-    // Seed the cost catalog only when the field is truly absent (first run or a
-    // pre-cost-catalog store). An explicit empty array (user cleared it) is kept.
-    costCatalog,
-    pricebook: raw?.pricebook ?? [],
-  });
-
-  const costIndex = buildCostIndex(reconciled.costCatalog);
-  const orders = reconciled.orders.map((order) => {
+  // Backfill profit on orders placed before profit tracking. Revenue is the
+  // amount actually charged (discount + delivery included), matching how a
+  // freshly confirmed order computes it.
+  const index = buildPerfumeIndex(perfumes);
+  const orders = (raw?.orders ?? []).map((order) => {
     if (typeof order.profit === "number") return order;
     const items = order.items.map((it) => {
       if (it.unitCost !== undefined) return it;
       const ml = it.size ?? it.mlSold;
-      const pc = lookupCostForItem(costIndex, it.perfumeId, it.brand, it.perfumeName);
-      return {
-        ...it,
-        unitCost: pc !== null && ml > 0 ? decantPerfumeCost(pc, ml) : undefined,
-      };
+      const perfume = lookupPerfume(index, it.perfumeId);
+      const cost =
+        perfume !== null && ml > 0 ? decantPerfumeCost(perfume, ml) : null;
+      return { ...it, unitCost: cost ?? undefined };
     });
-    const revenue = order.amountOverride ?? order.total;
-    return { ...order, items, profit: orderProfitFromItems(items, revenue) };
+    return {
+      ...order,
+      items,
+      profit: orderProfitFromItems(items, orderChargedTotal(order)),
+    };
   });
 
-  return { ...reconciled, orders };
+  return {
+    brands: raw?.brands ?? [],
+    perfumes,
+    sales,
+    orders,
+    auditLog: raw?.auditLog ?? [],
+    pricebook: raw?.pricebook ?? [],
+  };
 }
 
 function mergeById<T>(base: T[], incoming: T[], idOf: (t: T) => string): T[] {
@@ -195,26 +173,12 @@ export function mergeStores(
     sales: mergeById(base.sales, incoming.sales, (s) => s.id),
     orders: mergeById(base.orders, incoming.orders, (o) => o.id),
     auditLog: mergeById(base.auditLog, incoming.auditLog, (a) => a.id),
-    // Rows linked to a perfume merge by that id (rename-proof); untracked rows
-    // still merge by key. Any old-key/new-id duplicate pair this lets through is
-    // cleaned up by reconcileCostLinks on the next normalize.
-    costCatalog: mergeById(
-      base.costCatalog,
-      incoming.costCatalog,
-      (c) => c.perfumeId ?? c.key,
-    ),
     pricebook: mergeById(
       base.pricebook,
       incoming.pricebook,
       (p) => p.perfumeId ?? p.key,
     ),
   };
-}
-
-function getTodayMinus(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
 }
 
 function deriveBrandCode(name: string): string {
@@ -274,9 +238,9 @@ function migrateV1(raw: string): InventoryStore {
       perfumeCode: `${brandCode}-${serial}`,
       brandId: p.brandId,
       name: p.name,
-      totalMl: p.totalMl,
+      bottleMl: p.totalMl > 0 ? p.totalMl : DEFAULT_BOTTLE_ML,
+      bottleCost: p.costPrice,
       stockMl: p.totalMl - (soldByPerfume[p.perfumeId] ?? 0),
-      costPrice: p.costPrice,
       purchaseDate: p.purchaseDate,
     };
   });
@@ -287,7 +251,6 @@ function migrateV1(raw: string): InventoryStore {
     sales: v1.sales,
     orders: [],
     auditLog: [],
-    costCatalog: COST_CATALOG_SEED,
     pricebook: [],
   };
 }
@@ -296,9 +259,9 @@ export function loadStore(): InventoryStore {
   const rawV2 = localStorage.getItem(STORAGE_KEY_V2);
   if (rawV2 !== null) {
     try {
-      return normalizeStore(JSON.parse(rawV2) as Partial<InventoryStore>);
+      return normalizeStore(JSON.parse(rawV2) as LegacyStore);
     } catch {
-      // corrupted v2 data — fall through to seed
+      // corrupted v2 data — fall through
     }
   }
 
@@ -309,14 +272,22 @@ export function loadStore(): InventoryStore {
       saveStore(migrated);
       return migrated;
     } catch {
-      // corrupted v1 data — fall through to seed
+      // corrupted v1 data — fall through
     }
   }
 
-  saveStore(SEED_DATA);
-  return structuredClone(SEED_DATA);
+  // Nothing stored yet. Return empty WITHOUT persisting, so a transient load
+  // failure can't write a placeholder that later merges into the real store.
+  return emptyStore();
 }
 
+/** Persist the offline cache. Never throws: a full quota must not take down the
+ * mutation that triggered the save (the in-memory store is still correct, and in
+ * cloud mode the remote write is the durable one). */
 export function saveStore(store: InventoryStore): void {
-  localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(store));
+  try {
+    localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(store));
+  } catch (e) {
+    console.warn("Local cache write failed (data kept in memory).", e);
+  }
 }

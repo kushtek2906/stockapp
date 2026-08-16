@@ -1,15 +1,48 @@
 import {
   DECANT_SIZES,
+  type Brand,
   type DecantCatalog,
   type DecantCatalogEntry,
   type DecantSize,
+  type Perfume,
   type PerfumePrice,
 } from "../types";
 import { normalizeName } from "./normalize";
 
-/** Canonical key for a perfume, shared with the cost catalog. */
+/** Canonical key for a perfume: how a price row is matched to a sheet row. */
 export function priceKey(brand: string, perfume: string): string {
   return normalizeName(`${brand} ${perfume}`);
+}
+
+/**
+ * Re-key the pricebook rows that are pinned to an inventory perfume, so a brand
+ * or perfume rename doesn't orphan its price overrides. Rows with no `perfumeId`
+ * belong to a sheet row and are left alone. Returns the same array reference
+ * when nothing moved.
+ */
+export function syncPricebookNames(
+  pricebook: PerfumePrice[],
+  perfumes: Perfume[],
+  brands: Brand[],
+): PerfumePrice[] {
+  const perfumeById = new Map(perfumes.map((p) => [p.perfumeId, p]));
+  const brandNameById = new Map(brands.map((b) => [b.brandId, b.name]));
+  let changed = false;
+
+  const next = pricebook.map((row) => {
+    if (row.perfumeId == null) return row;
+    const p = perfumeById.get(row.perfumeId);
+    if (p === undefined) return row; // dangling link — deletePerfume detaches it
+    const brand = brandNameById.get(p.brandId) ?? "";
+    const key = priceKey(brand, p.name);
+    if (row.key === key && row.brand === brand && row.perfume === p.name) {
+      return row;
+    }
+    changed = true;
+    return { ...row, key, brand, perfume: p.name };
+  });
+
+  return changed ? next : pricebook;
 }
 
 export interface PriceIndex {

@@ -27,11 +27,11 @@ import { loadPrefs } from "../lib/prefs";
 import { formatCurrency, formatDateTime } from "../lib/utils";
 import { cn } from "../lib/utils";
 import {
-  buildCostIndex,
+  buildPerfumeIndex,
   computeOrderProfit,
   lineProfit,
-  lookupCostForItem,
-  type CostIndex,
+  lookupPerfume,
+  type PerfumeIndex,
 } from "../lib/profit";
 import {
   DECANT_SIZES,
@@ -39,7 +39,6 @@ import {
   type DecantCatalogEntry,
   type DecantSize,
   type Perfume,
-  type PerfumeCost,
 } from "../types";
 import { SheetSettingsDialog } from "../components/order/SheetSettingsDialog";
 import { Badge } from "../components/ui/Badge";
@@ -51,7 +50,6 @@ import { Label } from "../components/ui/Label";
 interface OrderPageProps {
   catalog: DecantCatalog | null;
   perfumes: Perfume[];
-  costCatalog: PerfumeCost[];
   onConfirmOrder: (input: ConfirmOrderInput) => ConfirmOrderResult;
   syncing: boolean;
   lastSynced: string | null;
@@ -204,7 +202,7 @@ interface OrderItemRowProps {
   position: number;
   catalog: DecantCatalog;
   perfumes: Perfume[];
-  costIndex: CostIndex;
+  perfumeIndex: PerfumeIndex;
   onChange: (next: MatchedOrderItem) => void;
 }
 
@@ -213,23 +211,15 @@ function OrderItemRow({
   position,
   catalog,
   perfumes,
-  costIndex,
+  perfumeIndex,
   onChange,
 }: OrderItemRowProps) {
   const meta = STATUS_META[item.status];
-  const pc =
-    item.chosen !== null
-      ? lookupCostForItem(
-          costIndex,
-          item.linkedPerfumeId,
-          item.chosen.brand,
-          item.chosen.perfume,
-        )
-      : null;
+  const linked = lookupPerfume(perfumeIndex, item.linkedPerfumeId);
   const effMl = effectiveMl(item);
   const profit =
     item.unitPrice !== null && effMl !== null && effMl > 0
-      ? lineProfit(item.unitPrice, effMl, pc)
+      ? lineProfit(item.unitPrice, effMl, linked)
       : null;
   const isCustom = item.custom;
   const availableSizes = item.chosen
@@ -389,7 +379,6 @@ function OrderItemRow({
 export function OrderPage({
   catalog,
   perfumes,
-  costCatalog,
   onConfirmOrder,
   syncing,
   lastSynced,
@@ -452,7 +441,7 @@ export function OrderPage({
     [items, showBrand, discountPct, deliveryCharge, amountOverride],
   );
 
-  const costIndex = useMemo(() => buildCostIndex(costCatalog), [costCatalog]);
+  const perfumeIndex = useMemo(() => buildPerfumeIndex(perfumes), [perfumes]);
 
   // Live order profit: revenue = manual override, else subtotal − discount + delivery.
   const revenue = useMemo(
@@ -466,19 +455,12 @@ export function OrderPage({
       computeOrderProfit(
         billableItems.map((it) => ({
           unitPrice: it.unitPrice as number,
-          size: effectiveMl(it) as number,
-          pc: it.chosen
-            ? lookupCostForItem(
-                costIndex,
-                it.linkedPerfumeId,
-                it.chosen.brand,
-                it.chosen.perfume,
-              )
-            : null,
+          ml: effectiveMl(it) as number,
+          perfume: lookupPerfume(perfumeIndex, it.linkedPerfumeId),
         })),
         revenue,
       ),
-    [billableItems, costIndex, revenue],
+    [billableItems, perfumeIndex, revenue],
   );
 
   const resetCustomer = () => {
@@ -929,7 +911,7 @@ export function OrderPage({
                   position={i + 1}
                   catalog={catalog}
                   perfumes={perfumes}
-                  costIndex={costIndex}
+                  perfumeIndex={perfumeIndex}
                   onChange={(next) => updateItem(i, next)}
                 />
               ))}

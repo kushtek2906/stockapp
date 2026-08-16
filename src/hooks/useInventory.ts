@@ -9,17 +9,13 @@ import {
 import type { ImportPayload } from "../lib/importSchema";
 import { normalizeName } from "../lib/normalize";
 import { computeChargedTotal } from "../lib/order";
-import { priceKey } from "../lib/pricebook";
+import { priceKey, syncPricebookNames } from "../lib/pricebook";
 import { nextPerfumeCode, today } from "../lib/utils";
 import {
   DEFAULT_BOTTLE_ML,
-  reconcileCostLinks,
-  syncCostForPerfume,
-} from "../lib/costSync";
-import {
-  buildCostIndex,
+  buildPerfumeIndex,
   decantPerfumeCost,
-  lookupCostForItem,
+  lookupPerfume,
   orderProfitFromItems,
 } from "../lib/profit";
 import type {
@@ -33,7 +29,6 @@ import type {
   OrderLineRecord,
   PaymentMode,
   Perfume,
-  PerfumeCost,
   PerfumePrice,
   Sale,
 } from "../types";
@@ -68,8 +63,9 @@ export interface AddBrandInput {
 export interface AddPerfumeInput {
   brandId: string;
   name: string;
-  totalMl: number;
-  costPrice: number;
+  /** Size of one bottle. Also seeds opening stock. */
+  bottleMl: number;
+  bottleCost: number;
   purchaseDate: string;
   imageUrl?: string;
 }
@@ -82,8 +78,8 @@ export interface EditBrandInput {
 
 export interface EditPerfumeInput {
   name: string;
-  totalMl: number;
-  costPrice: number;
+  bottleMl: number;
+  bottleCost: number;
   purchaseDate: string;
   imageUrl?: string;
 }
@@ -146,7 +142,7 @@ export interface EditOrderInput extends OrderDetailsInput {
 export interface CatalogImportItem {
   brand: string;
   name: string;
-  costPrice: number | null;
+  bottleCost: number | null;
 }
 
 export interface CatalogImportResult {
@@ -194,16 +190,10 @@ export function useInventory() {
     return map;
   }, [store.perfumes]);
 
-  // Total money invested to date — the sum of every perfume's cost price. Does
+  // Total money invested to date — the sum of every perfume's bottle cost. Does
   // NOT shrink as stock is sold (that's what "Total Revenue" tracks instead).
   const totalInvestment = useMemo<number>(() => {
-    return store.perfumes.reduce((sum, p) => sum + p.costPrice, 0);
-  }, [store.perfumes]);
-
-  // "Perfumes purchased" metric — count of products and total ml ever bought.
-  const totalPurchasedCount = store.perfumes.length;
-  const totalPurchasedMl = useMemo<number>(() => {
-    return store.perfumes.reduce((sum, p) => sum + p.totalMl, 0);
+    return store.perfumes.reduce((sum, p) => sum + p.bottleCost, 0);
   }, [store.perfumes]);
 
   const totalRevenue = useMemo<number>(() => {
@@ -288,16 +278,19 @@ export function useInventory() {
         `Edited brand "${brand.name}" → "${input.name.trim()}"${codeChanged ? ` (code: ${brand.brandCode} → ${newCode})` : ""}`,
       );
 
-      // A brand rename changes every child perfume's cost/price key — the
-      // reconcile rewrites the linked rows so nothing gets orphaned.
-      persist(
-        reconcileCostLinks({
-          ...store,
-          brands: updatedBrands,
-          perfumes: updatedPerfumes,
-          auditLog: [...store.auditLog, entry],
-        }),
-      );
+      // A brand rename changes every child perfume's price key — re-key the
+      // pinned pricebook rows so their overrides aren't orphaned.
+      persist({
+        ...store,
+        brands: updatedBrands,
+        perfumes: updatedPerfumes,
+        pricebook: syncPricebookNames(
+          store.pricebook,
+          updatedPerfumes,
+          updatedBrands,
+        ),
+        auditLog: [...store.auditLog, entry],
+      });
       toast.success(`Brand "${input.name.trim()}" updated.`);
     },
     [store, persist],
@@ -348,9 +341,9 @@ export function useInventory() {
         perfumeCode,
         brandId: input.brandId,
         name: input.name.trim(),
-        totalMl: input.totalMl,
-        stockMl: input.totalMl, // buy X ml → X ml in stock
-        costPrice: input.costPrice,
+        bottleMl: input.bottleMl,
+        stockMl: input.bottleMl, // a new bottle starts full
+        bottleCost: input.bottleCost,
         purchaseDate: input.purchaseDate,
         imageUrl: input.imageUrl,
       };
@@ -358,20 +351,13 @@ export function useInventory() {
         "create",
         "perfume",
         perfume.perfumeId,
-        `Added perfume "${perfume.name}" (${perfume.perfumeCode}) — ${perfume.totalMl} ml @ ₹${perfume.costPrice}`,
+        `Added perfume "${perfume.name}" (${perfume.perfumeCode}) — ${perfume.bottleMl} ml bottle @ ₹${perfume.bottleCost}`,
       );
-      // Mirror the new perfume into the cost catalog (Costs tab / order profit).
-      persist(
-        syncCostForPerfume(
-          {
-            ...store,
-            perfumes: [...store.perfumes, perfume],
-            auditLog: [...store.auditLog, entry],
-          },
-          perfume.perfumeId,
-          "perfume",
-        ),
-      );
+      persist({
+        ...store,
+        perfumes: [...store.perfumes, perfume],
+        auditLog: [...store.auditLog, entry],
+      });
       toast.success(`"${perfume.name}" (${perfume.perfumeCode}) added.`);
       return perfume;
     },
@@ -388,8 +374,8 @@ export function useInventory() {
           ? {
               ...p,
               name: input.name.trim(),
-              totalMl: input.totalMl,
-              costPrice: input.costPrice,
+              bottleMl: input.bottleMl,
+              bottleCost: input.bottleCost,
               purchaseDate: input.purchaseDate,
               imageUrl: input.imageUrl ?? p.imageUrl,
             }
@@ -400,20 +386,18 @@ export function useInventory() {
         "edit",
         "perfume",
         perfumeId,
-        `Edited "${perfume.name}" (${perfume.perfumeCode}): name="${input.name.trim()}", ml=${input.totalMl}, cost=₹${input.costPrice}`,
+        `Edited "${perfume.name}" (${perfume.perfumeCode}): name="${input.name.trim()}", bottle=${input.bottleMl} ml, cost=₹${input.bottleCost}`,
       );
-      // Follow the edit into the linked cost row (name, key and bottleCost).
-      persist(
-        syncCostForPerfume(
-          {
-            ...store,
-            perfumes: updatedPerfumes,
-            auditLog: [...store.auditLog, entry],
-          },
-          perfumeId,
-          "perfume",
+      persist({
+        ...store,
+        perfumes: updatedPerfumes,
+        pricebook: syncPricebookNames(
+          store.pricebook,
+          updatedPerfumes,
+          store.brands,
         ),
-      );
+        auditLog: [...store.auditLog, entry],
+      });
       toast.success(`"${input.name.trim()}" updated.`);
     },
     [store, persist],
@@ -492,17 +476,13 @@ export function useInventory() {
         perfumeId,
         `Deleted perfume "${perfume.name}" (${perfume.perfumeCode})`,
       );
-      // Keep the cost row as an untracked reference entry (perfumeId → null).
-      const costCatalog = store.costCatalog.map((c) =>
-        c.perfumeId === perfumeId ? { ...c, perfumeId: null } : c,
-      );
+      // Keep any price overrides, but detach them from the deleted perfume.
       const pricebook = store.pricebook.map((p) =>
         p.perfumeId === perfumeId ? { ...p, perfumeId: null } : p,
       );
       persist({
         ...store,
         perfumes: store.perfumes.filter((p) => p.perfumeId !== perfumeId),
-        costCatalog,
         pricebook,
         auditLog: [...store.auditLog, entry],
       });
@@ -678,14 +658,12 @@ export function useInventory() {
           perfumeCode,
           brandId: brand.brandId,
           name: p.name.trim(),
-          totalMl: p.totalMl,
-          stockMl: p.totalMl,
-          costPrice: p.costPrice,
+          bottleMl: p.bottleMl,
+          stockMl: p.bottleMl,
+          bottleCost: p.bottleCost,
           purchaseDate: p.purchaseDate,
         };
         nextStore = { ...nextStore, perfumes: [...nextStore.perfumes, newPerfume] };
-        // Mirror into the cost catalog so imported perfumes show on Costs too.
-        nextStore = syncCostForPerfume(nextStore, newPerfume.perfumeId, "perfume");
         perfumesAdded += 1;
       }
 
@@ -725,10 +703,8 @@ export function useInventory() {
       let perfumesAdded = 0;
       let skipped = 0;
       let missingCost = 0;
-      /** New perfumes + their sheet cost, for the cost-catalog sync pass. */
-      const addedPerfumes: Array<{ id: string; cost: number | null }> = [];
-      /** Already-present perfumes whose sheet cost should refresh the catalog. */
-      const existingCostRefreshes: Array<{ id: string; cost: number }> = [];
+      /** Already-present perfumes whose bottle cost the sheet should refresh. */
+      const costRefreshById = new Map<string, number>();
 
       const makeCode = (name: string): string => {
         const words = name.trim().split(/\s+/).filter(Boolean);
@@ -766,10 +742,10 @@ export function useInventory() {
         if (item.name.trim() === "" || existingPerfumeIdByKey.has(key)) {
           skipped += 1;
           // Re-import: the revision tab is the cost source of truth, so a fresh
-          // sheet cost still refreshes the existing perfume's cost entry.
+          // sheet cost still refreshes the existing perfume's bottle cost.
           const existingId = existingPerfumeIdByKey.get(key);
-          if (existingId !== undefined && item.costPrice !== null) {
-            existingCostRefreshes.push({ id: existingId, cost: item.costPrice });
+          if (existingId !== undefined && item.bottleCost !== null) {
+            costRefreshById.set(existingId, item.bottleCost);
           }
           continue;
         }
@@ -778,43 +754,33 @@ export function useInventory() {
           brand.brandCode,
           perfumes.map((p) => p.perfumeCode),
         );
-        if (item.costPrice === null) missingCost += 1;
+        if (item.bottleCost === null) missingCost += 1;
         const perfumeId = generateId("pfm");
+        // The sheet carries no bottle size or stock — assume a standard bottle
+        // so cost-per-ml has a denominator, and start stock at zero.
         perfumes.push({
           perfumeId,
           perfumeCode,
           brandId: brand.brandId,
           name: item.name.trim(),
-          totalMl: 0,
+          bottleMl: DEFAULT_BOTTLE_ML,
           stockMl: 0,
-          costPrice: item.costPrice ?? 0,
+          bottleCost: item.bottleCost ?? 0,
           purchaseDate: today(),
         });
         existingPerfumeIdByKey.set(key, perfumeId);
-        addedPerfumes.push({ id: perfumeId, cost: item.costPrice });
         perfumesAdded += 1;
       }
 
-      // Sync the cost catalog: every imported perfume gets a linked cost row
-      // (sheet cost, 100 ml default size), and re-imported costs refresh both
-      // the catalog and the perfume's costPrice.
-      let next: InventoryStore = { ...store, brands, perfumes };
-      for (const a of addedPerfumes) {
-        next = syncCostForPerfume(next, a.id, "catalog", {
-          bottleCost: a.cost ?? undefined,
-          defaultBottleMl: DEFAULT_BOTTLE_ML,
-        });
-      }
+      // Apply refreshed costs to perfumes that were already present.
       let costsUpdated = 0;
-      for (const r of existingCostRefreshes) {
-        const after = syncCostForPerfume(next, r.id, "catalog", {
-          bottleCost: r.cost,
-        });
-        if (after !== next) {
-          costsUpdated += 1;
-          next = after;
-        }
-      }
+      const withCosts = perfumes.map((p) => {
+        const cost = costRefreshById.get(p.perfumeId);
+        if (cost === undefined || cost === p.bottleCost) return p;
+        costsUpdated += 1;
+        return { ...p, bottleCost: cost };
+      });
+      const next: InventoryStore = { ...store, brands, perfumes: withCosts };
 
       if (brandsAdded > 0 || perfumesAdded > 0 || costsUpdated > 0) {
         const entry = makeAuditEntry(
@@ -837,121 +803,59 @@ export function useInventory() {
     [store, persist],
   );
 
-  // ── Cost catalog (bottle cost + size per perfume, powers order profit) ───────
+  // ── Cost + size (owned by the perfume; powers order profit and margins) ─────
 
-  const upsertCost = useCallback(
+  /** Set a perfume's bottle cost and bottle size — the pair every cost-per-ml
+   * calculation reads. Optionally renames it too, so the Costs tab can edit a
+   * row end to end. There is no second copy to keep in step. */
+  const setPerfumeCost = useCallback(
     (
-      originalKey: string | null,
-      input: { brand: string; perfume: string; bottleCost: number; bottleMl: number },
+      perfumeId: string,
+      input: { name?: string; bottleCost: number; bottleMl: number },
     ): void => {
-      const key = normalizeName(`${input.brand} ${input.perfume}`);
-      if (key === "") {
-        toast.error("Enter a brand and perfume name.");
-        return;
-      }
+      const perfume = store.perfumes.find((p) => p.perfumeId === perfumeId);
+      if (perfume === undefined) return;
 
-      const original =
-        originalKey !== null
-          ? store.costCatalog.find((c) => c.key === originalKey)
-          : undefined;
-      // Editing a linked row — or adding/renaming onto a key that a linked row
-      // owns — targets that inventory perfume's cost.
-      const linkedTarget =
-        original?.perfumeId != null
-          ? original
-          : store.costCatalog.find((c) => c.perfumeId != null && c.key === key);
-      const linkedPerfume =
-        linkedTarget?.perfumeId != null
-          ? store.perfumes.find((p) => p.perfumeId === linkedTarget.perfumeId)
-          : undefined;
+      const trimmed = input.name?.trim();
+      const renamed =
+        trimmed !== undefined && trimmed !== "" && trimmed !== perfume.name;
+      const costChanged = input.bottleCost !== perfume.bottleCost;
+      const sizeChanged = input.bottleMl !== perfume.bottleMl;
+      if (!renamed && !costChanged && !sizeChanged) return;
 
-      if (linkedTarget !== undefined && linkedPerfume !== undefined) {
-        const newName = input.perfume.trim();
-        const renamed = newName !== "" && newName !== linkedPerfume.name;
-        const costChanged = input.bottleCost !== linkedPerfume.costPrice;
-
-        let next: InventoryStore = renamed
+      const perfumes = store.perfumes.map((p) =>
+        p.perfumeId === perfumeId
           ? {
-              ...store,
-              perfumes: store.perfumes.map((p) =>
-                p.perfumeId === linkedPerfume.perfumeId
-                  ? { ...p, name: newName }
-                  : p,
-              ),
+              ...p,
+              ...(renamed ? { name: trimmed } : {}),
+              bottleCost: input.bottleCost,
+              bottleMl: input.bottleMl,
             }
-          : store;
-        // Write the row's values, then let the sync push cost + names both ways
-        // (the perfume adopts bottleCost; the row's key follows the names).
-        next = {
-          ...next,
-          costCatalog: next.costCatalog.map((c) =>
-            c === linkedTarget
-              ? { ...c, bottleCost: input.bottleCost, bottleMl: input.bottleMl }
-              : c,
-          ),
-        };
-        // A different (untracked) row renamed onto the linked key merges away.
-        if (original !== undefined && original !== linkedTarget) {
-          next = {
-            ...next,
-            costCatalog: next.costCatalog.filter((c) => c !== original),
-          };
-        }
-        next = syncCostForPerfume(next, linkedPerfume.perfumeId, "catalog");
+          : p,
+      );
 
-        if (renamed || costChanged) {
-          const audit = makeAuditEntry(
-            "edit",
-            "perfume",
-            linkedPerfume.perfumeId,
-            `Costs tab edit synced to "${renamed ? newName : linkedPerfume.name}" (${linkedPerfume.perfumeCode})${renamed ? `: renamed from "${linkedPerfume.name}"` : ""}${costChanged ? `, cost ₹${linkedPerfume.costPrice} → ₹${input.bottleCost}` : ""}`,
-          );
-          next = { ...next, auditLog: [...next.auditLog, audit] };
-        }
-        persist(next);
-        toast.success(
-          `Cost saved for ${newName !== "" ? newName : linkedPerfume.name} — synced to inventory.`,
-        );
-        return;
-      }
+      const changes = [
+        renamed ? `renamed from "${perfume.name}"` : null,
+        costChanged ? `cost ₹${perfume.bottleCost} → ₹${input.bottleCost}` : null,
+        sizeChanged
+          ? `bottle ${perfume.bottleMl} ml → ${input.bottleMl} ml`
+          : null,
+      ].filter((c): c is string => c !== null);
 
-      // Untracked reference entry (perfume not in inventory).
-      const entry: PerfumeCost = {
-        key,
-        brand: input.brand.trim(),
-        perfume: input.perfume.trim(),
-        bottleCost: input.bottleCost,
-        bottleMl: input.bottleMl,
-        perfumeId: null,
-      };
-      // Drop the row being edited (originalKey) and any existing row with the new
-      // key, then append — so a rename can't create a duplicate.
-      const costCatalog = [
-        ...store.costCatalog.filter(
-          (c) => c.key !== key && c.key !== originalKey,
-        ),
-        entry,
-      ];
-      persist({ ...store, costCatalog });
-      toast.success(`Cost saved for ${entry.perfume}.`);
-    },
-    [store, persist],
-  );
+      const entry = makeAuditEntry(
+        "edit",
+        "perfume",
+        perfumeId,
+        `Costs: "${renamed ? trimmed : perfume.name}" (${perfume.perfumeCode}) — ${changes.join(", ")}`,
+      );
 
-  const deleteCost = useCallback(
-    (key: string): void => {
-      const row = store.costCatalog.find((c) => c.key === key);
-      if (row?.perfumeId != null) {
-        toast.error(
-          "This cost is linked to an inventory perfume — delete the perfume instead.",
-        );
-        return;
-      }
       persist({
         ...store,
-        costCatalog: store.costCatalog.filter((c) => c.key !== key),
+        perfumes,
+        pricebook: syncPricebookNames(store.pricebook, perfumes, store.brands),
+        auditLog: [...store.auditLog, entry],
       });
-      toast.success("Cost entry removed.");
+      toast.success(`${renamed ? trimmed : perfume.name} updated.`);
     },
     [store, persist],
   );
@@ -1015,12 +919,13 @@ export function useInventory() {
       brands: store.brands.length,
       perfumes: store.perfumes.length,
       sales: store.sales.length,
+      orders: store.orders.length,
     };
     const entry = makeAuditEntry(
       "delete",
       "perfume",
       "clear-all",
-      `Cleared all inventory: removed ${removed.brands} brand(s), ${removed.perfumes} perfume(s), ${removed.sales} sale(s)`,
+      `Cleared all inventory: removed ${removed.brands} brand(s), ${removed.perfumes} perfume(s), ${removed.sales} sale(s), ${removed.orders} order(s)`,
     );
     persist({
       brands: [],
@@ -1028,11 +933,7 @@ export function useInventory() {
       sales: [],
       orders: [],
       auditLog: [...store.auditLog, entry],
-      // Keep the cost/price reference data, but detach it from the (now
-      // deleted) perfumes — every row becomes an untracked entry again.
-      costCatalog: store.costCatalog.map((c) =>
-        c.perfumeId != null ? { ...c, perfumeId: null } : c,
-      ),
+      // Keep the price overrides, detached from the (now deleted) perfumes.
       pricebook: store.pricebook.map((p) =>
         p.perfumeId != null ? { ...p, perfumeId: null } : p,
       ),
@@ -1050,7 +951,7 @@ export function useInventory() {
       const stockLocal: Record<string, number> = {};
       for (const p of store.perfumes) stockLocal[p.perfumeId] = p.stockMl;
 
-      const costIndex = buildCostIndex(store.costCatalog);
+      const perfumeIndex = buildPerfumeIndex(store.perfumes);
       const items: OrderLineRecord[] = [];
       let applied = 0;
       let oversold = 0;
@@ -1076,10 +977,10 @@ export function useInventory() {
           saleId = sale.id;
           applied += 1;
         }
-        const pc =
-          it.mlSold > 0
-            ? lookupCostForItem(costIndex, it.perfumeId, it.brand, it.perfumeName)
-            : null;
+        const linked =
+          it.mlSold > 0 ? lookupPerfume(perfumeIndex, it.perfumeId) : null;
+        const unitCost =
+          linked !== null ? decantPerfumeCost(linked, it.mlSold) : null;
         items.push({
           perfumeId: it.perfumeId,
           perfumeName: it.perfumeName,
@@ -1087,10 +988,7 @@ export function useInventory() {
           size: it.size,
           mlSold: it.mlSold,
           unitPrice: it.unitPrice,
-          unitCost:
-            pc !== null && it.mlSold > 0
-              ? decantPerfumeCost(pc, it.mlSold)
-              : undefined,
+          unitCost: unitCost ?? undefined,
           saleId,
         });
       }
@@ -1225,7 +1123,7 @@ export function useInventory() {
 
       // Re-apply the edited/added lines. Never block — warn only. Stock may go
       // negative ("what I say goes").
-      const costIndex = buildCostIndex(store.costCatalog);
+      const perfumeIndex = buildPerfumeIndex(store.perfumes);
       const items: OrderLineRecord[] = [];
       let oversold = 0;
       for (const it of input.items) {
@@ -1244,10 +1142,10 @@ export function useInventory() {
           stockLocal[it.perfumeId] = rem - it.mlSold;
           saleId = sale.id;
         }
-        const pc =
-          it.mlSold > 0
-            ? lookupCostForItem(costIndex, it.perfumeId, it.brand, it.perfumeName)
-            : null;
+        const linked =
+          it.mlSold > 0 ? lookupPerfume(perfumeIndex, it.perfumeId) : null;
+        const unitCost =
+          linked !== null ? decantPerfumeCost(linked, it.mlSold) : null;
         items.push({
           perfumeId: it.perfumeId,
           perfumeName: it.perfumeName,
@@ -1255,10 +1153,7 @@ export function useInventory() {
           size: it.size,
           mlSold: it.mlSold,
           unitPrice: it.unitPrice,
-          unitCost:
-            pc !== null && it.mlSold > 0
-              ? decantPerfumeCost(pc, it.mlSold)
-              : undefined,
+          unitCost: unitCost ?? undefined,
           saleId,
         });
       }
@@ -1325,12 +1220,9 @@ export function useInventory() {
     sales: store.sales,
     orders: store.orders,
     auditLog: store.auditLog,
-    costCatalog: store.costCatalog,
     pricebook: store.pricebook,
     remainingMlMap,
     totalInvestment,
-    totalPurchasedCount,
-    totalPurchasedMl,
     totalRevenue,
     totalProfit,
     addBrand,
@@ -1347,8 +1239,7 @@ export function useInventory() {
     bulkImport,
     importCatalog,
     clearAllInventory,
-    upsertCost,
-    deleteCost,
+    setPerfumeCost,
     setPrice,
     confirmOrder,
     deleteOrder,

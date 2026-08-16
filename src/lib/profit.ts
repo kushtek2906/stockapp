@@ -1,6 +1,4 @@
-import type { PerfumeCost } from "../types";
-import { normalizeName } from "./normalize";
-import { tokenSetSimilarity } from "./match";
+import type { Perfume } from "../types";
 
 /**
  * Fixed order costs (INR). The decant vial is charged per decant; delivery and
@@ -12,92 +10,63 @@ export const ORDER_COSTS = {
   packaging: 10,
 } as const;
 
-export interface CostIndex {
-  byKey: Map<string, PerfumeCost>;
-  /** Rows linked to an inventory perfume, by `perfumeId`. */
-  byPerfumeId: Map<string, PerfumeCost>;
-  list: PerfumeCost[];
-}
+/** Bottle size assumed when a perfume is created without a known one (e.g. a
+ * sheet import), so cost-per-ml still has a sensible denominator. */
+export const DEFAULT_BOTTLE_ML = 100;
 
-export function buildCostIndex(costCatalog: PerfumeCost[]): CostIndex {
-  const byKey = new Map<string, PerfumeCost>();
-  const byPerfumeId = new Map<string, PerfumeCost>();
-  for (const c of costCatalog) {
-    byKey.set(c.key, c);
-    if (c.perfumeId != null) byPerfumeId.set(c.perfumeId, c);
-  }
-  return { byKey, byPerfumeId, list: costCatalog };
-}
+/** Perfumes by id — the only way an order line resolves its cost. */
+export type PerfumeIndex = Map<string, Perfume>;
 
-/** Minimum token-set similarity to accept a fuzzy cost match. */
-const LOOKUP_THRESHOLD = 0.62;
-
-/**
- * Find the cost entry for a perfume. Tries an exact normalized-key hit first
- * (keys are `normalizeName(brand + " " + perfume)`, matching how the catalog
- * names perfumes), then a fuzzy token-set fallback for minor naming drift.
- */
-export function lookupCost(
-  index: CostIndex,
-  brand: string,
-  perfume: string,
-): PerfumeCost | null {
-  const q = normalizeName(`${brand} ${perfume}`.trim());
-  if (q === "") return null;
-  const exact = index.byKey.get(q);
-  if (exact !== undefined) return exact;
-
-  let best: PerfumeCost | null = null;
-  let bestScore = 0;
-  for (const c of index.list) {
-    const score = tokenSetSimilarity(q, c.key);
-    if (score > bestScore) {
-      bestScore = score;
-      best = c;
-    }
-  }
-  return bestScore >= LOOKUP_THRESHOLD ? best : null;
+export function buildPerfumeIndex(perfumes: Perfume[]): PerfumeIndex {
+  return new Map(perfumes.map((p) => [p.perfumeId, p]));
 }
 
 /**
- * Cost for an order line: the inventory-linked row wins when the line carries a
- * `perfumeId` (rename-proof, no fuzzy ambiguity); unlinked lines fall back to
- * the name/fuzzy lookup above.
+ * The perfume an order line's cost comes from, or null when the line isn't
+ * linked to tracked inventory. Costs live on the Perfume and nowhere else, so
+ * there is no name matching and no fuzzy fallback: an unlinked line simply has
+ * no cost, and the UI shows "cost?" rather than inventing a number.
  */
-export function lookupCostForItem(
-  index: CostIndex,
+export function lookupPerfume(
+  index: PerfumeIndex,
   perfumeId: string | null | undefined,
-  brand: string,
-  perfume: string,
-): PerfumeCost | null {
-  if (perfumeId != null) {
-    const linked = index.byPerfumeId.get(perfumeId);
-    if (linked !== undefined) return linked;
-  }
-  return lookupCost(index, brand, perfume);
+): Perfume | null {
+  return perfumeId != null ? (index.get(perfumeId) ?? null) : null;
 }
 
-export function costPerMl(pc: PerfumeCost): number {
-  return pc.bottleMl > 0 ? pc.bottleCost / pc.bottleMl : 0;
+/** Whether this perfume can produce a cost at all. */
+export function hasCostData(p: Perfume): boolean {
+  return p.bottleMl > 0 && p.bottleCost > 0;
 }
 
-/** Perfume cost for a single decant of `size` ml (excludes vial/delivery/packaging). */
-export function decantPerfumeCost(pc: PerfumeCost, size: number): number {
-  return costPerMl(pc) * size;
+/**
+ * Cost of one ml, or null when the perfume has no usable cost data. Null rather
+ * than 0 on purpose — a missing cost must never be mistaken for a free perfume,
+ * which would silently book the whole sale price as profit.
+ */
+export function costPerMl(p: Perfume): number | null {
+  return hasCostData(p) ? p.bottleCost / p.bottleMl : null;
+}
+
+/** Perfume cost for a decant of `ml` (excludes vial/delivery/packaging). */
+export function decantPerfumeCost(p: Perfume, ml: number): number | null {
+  const perMl = costPerMl(p);
+  return perMl === null ? null : perMl * ml;
 }
 
 /**
  * Profit on a single decant = sale price − perfume cost − ₹25 vial. Delivery and
  * packaging are order-level, so they are NOT included here. Returns null when the
- * perfume has no cost data (caller shows "cost?").
+ * perfume is unknown or has no cost data (caller shows "cost?").
  */
 export function lineProfit(
   unitPrice: number,
-  size: number,
-  pc: PerfumeCost | null,
+  ml: number,
+  p: Perfume | null,
 ): number | null {
-  if (pc === null) return null;
-  return unitPrice - decantPerfumeCost(pc, size) - ORDER_COSTS.decantVial;
+  if (p === null) return null;
+  const cost = decantPerfumeCost(p, ml);
+  return cost === null ? null : unitPrice - cost - ORDER_COSTS.decantVial;
 }
 
 /**
@@ -121,8 +90,8 @@ export function orderProfitFromItems(
 
 export interface ProfitLine {
   unitPrice: number;
-  size: number;
-  pc: PerfumeCost | null;
+  ml: number;
+  perfume: Perfume | null;
 }
 
 export interface OrderProfit {
@@ -147,8 +116,9 @@ export function computeOrderProfit(
   let perfumeCost = 0;
   let missingCost = 0;
   for (const l of lines) {
-    if (l.pc === null) missingCost += 1;
-    else perfumeCost += decantPerfumeCost(l.pc, l.size);
+    const cost = l.perfume === null ? null : decantPerfumeCost(l.perfume, l.ml);
+    if (cost === null) missingCost += 1;
+    else perfumeCost += cost;
   }
   const decantCount = lines.length;
   const profit =

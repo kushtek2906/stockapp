@@ -150,7 +150,12 @@ export function InventoryTable({
                   >
                     {remaining.toFixed(1)} ml
                   </button>
-                  <span className="text-stone-600">{formatCurrency(p.costPrice)}</span>
+                  <span className="text-stone-600">
+                    {formatCurrency(p.bottleCost)}
+                    <span className="ml-1 text-xs text-stone-400">
+                      / {p.bottleMl}ml
+                    </span>
+                  </span>
                 </div>
                 <div className="mt-2 flex justify-end gap-1">
                   {isConfirming ? (
@@ -215,7 +220,7 @@ export function InventoryTable({
                 Status
               </th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">
-                Cost Price
+                Bottle
               </th>
               <th className="px-4 py-3 text-left font-medium text-stone-500">
                 Revenue
@@ -288,7 +293,10 @@ export function InventoryTable({
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-stone-700">
-                      {formatCurrency(p.costPrice)}
+                      {formatCurrency(p.bottleCost)}
+                      <span className="block text-xs text-stone-400">
+                        {p.bottleMl} ml bottle
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-stone-700">
                       {formatCurrency(totalSalesMap[p.perfumeId] ?? 0)}
