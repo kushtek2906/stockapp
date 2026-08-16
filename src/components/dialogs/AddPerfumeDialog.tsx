@@ -1,12 +1,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import type { Brand, Perfume } from "../../types";
 import { loadPrefs, savePrefs } from "../../lib/prefs";
-import { nextPerfumeCode, today } from "../../lib/utils";
+import { withPerfumeCodes } from "../../lib/perfumeCode";
+import { today } from "../../lib/utils";
 import { Button } from "../ui/Button";
 import { ImageUpload } from "../ui/ImageUpload";
 import { Input } from "../ui/Input";
@@ -68,14 +69,33 @@ export function AddPerfumeDialog({
   }, [open, rememberBrand, setValue]);
 
   const selectedBrandId = useWatch({ control, name: "brandId" });
+  const nameValue = useWatch({ control, name: "name" });
   const selectedBrand = brands.find((b) => b.brandId === selectedBrandId);
-  const codePreview =
-    selectedBrand !== undefined
-      ? nextPerfumeCode(
-          selectedBrand.brandCode,
-          perfumes.map((p) => p.perfumeCode),
-        )
-      : null;
+
+  // Codes derive from brand + name, and clashes shift both siblings, so the
+  // preview is produced by the real generator against a draft perfume.
+  const codePreview = useMemo(() => {
+    const typed = (nameValue ?? "").trim();
+    if (selectedBrand === undefined || typed === "") return null;
+    const DRAFT = "__draft__";
+    const coded = withPerfumeCodes(
+      [
+        ...perfumes,
+        {
+          perfumeId: DRAFT,
+          perfumeCode: "",
+          brandId: selectedBrand.brandId,
+          name: typed,
+          bottleMl: 1,
+          bottleCost: 0,
+          stockMl: 0,
+          purchaseDate: "",
+        },
+      ],
+      brands,
+    );
+    return coded.find((p) => p.perfumeId === DRAFT)?.perfumeCode ?? null;
+  }, [selectedBrand, nameValue, perfumes, brands]);
 
   const onSubmit = (data: FormValues) => {
     onAdd({ ...data, imageUrl });

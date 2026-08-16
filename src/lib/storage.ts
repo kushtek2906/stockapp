@@ -1,5 +1,6 @@
 import type { Brand, InventoryStore, Perfume } from "../types";
 import { orderChargedTotal } from "./order";
+import { withPerfumeCodes } from "./perfumeCode";
 import {
   DEFAULT_BOTTLE_ML,
   buildPerfumeIndex,
@@ -115,10 +116,16 @@ export function normalizeStore(
     };
   });
 
+  // Codes are derived from brand code + name, so they're rebuilt on every load
+  // rather than stored independently. This also converts the old serial format
+  // (AFN-002) to initials (AFN-9R) in one pass.
+  const brands = raw?.brands ?? [];
+  const coded = withPerfumeCodes(perfumes, brands);
+
   // Backfill profit on orders placed before profit tracking. Revenue is the
   // amount actually charged (discount + delivery included), matching how a
   // freshly confirmed order computes it.
-  const index = buildPerfumeIndex(perfumes);
+  const index = buildPerfumeIndex(coded);
   const orders = (raw?.orders ?? []).map((order) => {
     if (typeof order.profit === "number") return order;
     const items = order.items.map((it) => {
@@ -137,8 +144,8 @@ export function normalizeStore(
   });
 
   return {
-    brands: raw?.brands ?? [],
-    perfumes,
+    brands,
+    perfumes: coded,
     sales,
     orders,
     auditLog: raw?.auditLog ?? [],
@@ -268,7 +275,8 @@ export function loadStore(): InventoryStore {
   const rawV1 = localStorage.getItem(STORAGE_KEY_V1);
   if (rawV1 !== null) {
     try {
-      const migrated = migrateV1(rawV1);
+      // Run it through normalizeStore too, so codes are derived the same way.
+      const migrated = normalizeStore(migrateV1(rawV1));
       saveStore(migrated);
       return migrated;
     } catch {

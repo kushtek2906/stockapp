@@ -84,6 +84,22 @@ export function InventoryTable({
     return m;
   }, [sales]);
 
+  // Deleting a perfume keeps its sales, so the confirm says how many stay.
+  const saleCountMap = useMemo<Record<string, number>>(() => {
+    const m: Record<string, number> = {};
+    for (const s of sales) {
+      m[s.perfumeId] = (m[s.perfumeId] ?? 0) + 1;
+    }
+    return m;
+  }, [sales]);
+
+  const deleteLabel = (perfumeId: string): string => {
+    const n = saleCountMap[perfumeId] ?? 0;
+    return n === 0
+      ? "Confirm delete"
+      : `Delete — keep ${n} sale${n !== 1 ? "s" : ""}`;
+  };
+
   return (
     <div className="space-y-4">
       <div className="relative max-w-sm">
@@ -168,7 +184,7 @@ export function InventoryTable({
                           setConfirmDeleteId(null);
                         }}
                       >
-                        Confirm delete
+                        {deleteLabel(p.perfumeId)}
                       </Button>
                       <Button
                         size="sm"
@@ -315,7 +331,7 @@ export function InventoryTable({
                               setConfirmDeleteId(null);
                             }}
                           >
-                            Confirm
+                            {deleteLabel(p.perfumeId)}
                           </Button>
                           <Button
                             size="sm"

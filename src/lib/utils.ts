@@ -68,26 +68,4 @@ export function generateBrandCode(name: string): string {
   return letters.slice(0, 4);
 }
 
-/**
- * Generate the next perfume code for a given brand code.
- * Scans existing perfumeCodes for entries matching "XXX-NNN", finds the max serial,
- * then returns XXX-(max+1) zero-padded to 3 digits.
- * If no existing codes, returns "XXX-001".
- */
-export function nextPerfumeCode(
-  brandCode: string,
-  existingCodes: string[],
-): string {
-  const prefix = `${brandCode}-`;
-  let maxSerial = 0;
-  for (const code of existingCodes) {
-    if (code.startsWith(prefix)) {
-      const serial = Number.parseInt(code.slice(prefix.length), 10);
-      if (!Number.isNaN(serial) && serial > maxSerial) {
-        maxSerial = serial;
-      }
-    }
-  }
-  const next = String(maxSerial + 1).padStart(3, "0");
-  return `${brandCode}-${next}`;
-}
+// Perfume codes are derived from brand code + perfume name — see lib/perfumeCode.ts.

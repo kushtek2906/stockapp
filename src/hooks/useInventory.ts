@@ -10,7 +10,8 @@ import type { ImportPayload } from "../lib/importSchema";
 import { normalizeName } from "../lib/normalize";
 import { computeChargedTotal } from "../lib/order";
 import { priceKey, syncPricebookNames } from "../lib/pricebook";
-import { nextPerfumeCode, today } from "../lib/utils";
+import { withPerfumeCodes } from "../lib/perfumeCode";
+import { today } from "../lib/utils";
 import {
   DEFAULT_BOTTLE_ML,
   buildPerfumeIndex,
@@ -263,13 +264,8 @@ export function useInventory() {
           : b,
       );
 
-      const updatedPerfumes = codeChanged
-        ? store.perfumes.map((p) => {
-            if (p.brandId !== brandId) return p;
-            const serial = p.perfumeCode.split("-").at(-1) ?? "001";
-            return { ...p, perfumeCode: `${newCode}-${serial}` };
-          })
-        : store.perfumes;
+      // Perfume codes carry the brand code, so they re-derive from the new one.
+      const updatedPerfumes = withPerfumeCodes(store.perfumes, updatedBrands);
 
       const entry = makeAuditEntry(
         "edit",
@@ -334,11 +330,9 @@ export function useInventory() {
         toast.error("Brand not found.");
         throw new Error("Brand not found");
       }
-      const existingCodes = store.perfumes.map((p) => p.perfumeCode);
-      const perfumeCode = nextPerfumeCode(brand.brandCode, existingCodes);
       const perfume: Perfume = {
         perfumeId: generateId("pfm"),
-        perfumeCode,
+        perfumeCode: "", // derived from brand + name below
         brandId: input.brandId,
         name: input.name.trim(),
         bottleMl: input.bottleMl,
@@ -347,19 +341,26 @@ export function useInventory() {
         purchaseDate: input.purchaseDate,
         imageUrl: input.imageUrl,
       };
+      const perfumes = withPerfumeCodes(
+        [...store.perfumes, perfume],
+        store.brands,
+      );
+      const added =
+        perfumes.find((p) => p.perfumeId === perfume.perfumeId) ?? perfume;
+
       const entry = makeAuditEntry(
         "create",
         "perfume",
-        perfume.perfumeId,
-        `Added perfume "${perfume.name}" (${perfume.perfumeCode}) — ${perfume.bottleMl} ml bottle @ ₹${perfume.bottleCost}`,
+        added.perfumeId,
+        `Added perfume "${added.name}" (${added.perfumeCode}) — ${added.bottleMl} ml bottle @ ₹${added.bottleCost}`,
       );
       persist({
         ...store,
-        perfumes: [...store.perfumes, perfume],
+        perfumes,
         auditLog: [...store.auditLog, entry],
       });
-      toast.success(`"${perfume.name}" (${perfume.perfumeCode}) added.`);
-      return perfume;
+      toast.success(`"${added.name}" (${added.perfumeCode}) added.`);
+      return added;
     },
     [store, persist],
   );
@@ -369,17 +370,21 @@ export function useInventory() {
       const perfume = store.perfumes.find((p) => p.perfumeId === perfumeId);
       if (perfume === undefined) return;
 
-      const updatedPerfumes = store.perfumes.map((p) =>
-        p.perfumeId === perfumeId
-          ? {
-              ...p,
-              name: input.name.trim(),
-              bottleMl: input.bottleMl,
-              bottleCost: input.bottleCost,
-              purchaseDate: input.purchaseDate,
-              imageUrl: input.imageUrl ?? p.imageUrl,
-            }
-          : p,
+      // The code follows the name, so renaming re-derives it.
+      const updatedPerfumes = withPerfumeCodes(
+        store.perfumes.map((p) =>
+          p.perfumeId === perfumeId
+            ? {
+                ...p,
+                name: input.name.trim(),
+                bottleMl: input.bottleMl,
+                bottleCost: input.bottleCost,
+                purchaseDate: input.purchaseDate,
+                imageUrl: input.imageUrl ?? p.imageUrl,
+              }
+            : p,
+        ),
+        store.brands,
       );
 
       const entry = makeAuditEntry(
@@ -462,19 +467,22 @@ export function useInventory() {
       const perfume = store.perfumes.find((p) => p.perfumeId === perfumeId);
       if (perfume === undefined) return;
 
-      const hasSales = store.sales.some((s) => s.perfumeId === perfumeId);
-      if (hasSales) {
-        toast.error(
-          `Cannot delete "${perfume.name}" — it has existing sales records.`,
-        );
-        return;
-      }
+      // Past sales are deliberately NOT removed. Deleting a duplicate entry
+      // shouldn't rewrite history: the sales stay as standalone records so the
+      // money still counts toward revenue — they simply no longer name a
+      // perfume in the log.
+      const keptSales = store.sales.filter(
+        (s) => s.perfumeId === perfumeId,
+      ).length;
 
       const entry = makeAuditEntry(
         "delete",
         "perfume",
         perfumeId,
-        `Deleted perfume "${perfume.name}" (${perfume.perfumeCode})`,
+        `Deleted perfume "${perfume.name}" (${perfume.perfumeCode})` +
+          (keptSales > 0
+            ? ` — ${keptSales} past sale(s) kept; revenue unchanged`
+            : ""),
       );
       // Keep any price overrides, but detach them from the deleted perfume.
       const pricebook = store.pricebook.map((p) =>
@@ -486,7 +494,11 @@ export function useInventory() {
         pricebook,
         auditLog: [...store.auditLog, entry],
       });
-      toast.success(`"${perfume.name}" removed from inventory.`);
+      toast.success(
+        keptSales > 0
+          ? `"${perfume.name}" removed — ${keptSales} past sale${keptSales !== 1 ? "s" : ""} kept in your totals.`
+          : `"${perfume.name}" removed from inventory.`,
+      );
     },
     [store, persist],
   );
@@ -651,11 +663,9 @@ export function useInventory() {
           (b) => b.brandCode.toUpperCase() === p.brandCode.toUpperCase(),
         );
         if (brand === undefined) continue;
-        const existingCodes = nextStore.perfumes.map((pf) => pf.perfumeCode);
-        const perfumeCode = nextPerfumeCode(brand.brandCode, existingCodes);
         const newPerfume: Perfume = {
           perfumeId: generateId("pfm"),
-          perfumeCode,
+          perfumeCode: "", // derived once the whole batch is in
           brandId: brand.brandId,
           name: p.name.trim(),
           bottleMl: p.bottleMl,
@@ -666,6 +676,11 @@ export function useInventory() {
         nextStore = { ...nextStore, perfumes: [...nextStore.perfumes, newPerfume] };
         perfumesAdded += 1;
       }
+
+      nextStore = {
+        ...nextStore,
+        perfumes: withPerfumeCodes(nextStore.perfumes, nextStore.brands),
+      };
 
       if (brandsAdded > 0 || perfumesAdded > 0) {
         const entry = makeAuditEntry(
@@ -750,17 +765,13 @@ export function useInventory() {
           continue;
         }
 
-        const perfumeCode = nextPerfumeCode(
-          brand.brandCode,
-          perfumes.map((p) => p.perfumeCode),
-        );
         if (item.bottleCost === null) missingCost += 1;
         const perfumeId = generateId("pfm");
         // The sheet carries no bottle size or stock — assume a standard bottle
         // so cost-per-ml has a denominator, and start stock at zero.
         perfumes.push({
           perfumeId,
-          perfumeCode,
+          perfumeCode: "", // derived once the whole batch is in
           brandId: brand.brandId,
           name: item.name.trim(),
           bottleMl: DEFAULT_BOTTLE_ML,
@@ -780,7 +791,11 @@ export function useInventory() {
         costsUpdated += 1;
         return { ...p, bottleCost: cost };
       });
-      const next: InventoryStore = { ...store, brands, perfumes: withCosts };
+      const next: InventoryStore = {
+        ...store,
+        brands,
+        perfumes: withPerfumeCodes(withCosts, brands),
+      };
 
       if (brandsAdded > 0 || perfumesAdded > 0 || costsUpdated > 0) {
         const entry = makeAuditEntry(
@@ -823,15 +838,18 @@ export function useInventory() {
       const sizeChanged = input.bottleMl !== perfume.bottleMl;
       if (!renamed && !costChanged && !sizeChanged) return;
 
-      const perfumes = store.perfumes.map((p) =>
-        p.perfumeId === perfumeId
-          ? {
-              ...p,
-              ...(renamed ? { name: trimmed } : {}),
-              bottleCost: input.bottleCost,
-              bottleMl: input.bottleMl,
-            }
-          : p,
+      const perfumes = withPerfumeCodes(
+        store.perfumes.map((p) =>
+          p.perfumeId === perfumeId
+            ? {
+                ...p,
+                ...(renamed ? { name: trimmed } : {}),
+                bottleCost: input.bottleCost,
+                bottleMl: input.bottleMl,
+              }
+            : p,
+        ),
+        store.brands,
       );
 
       const changes = [
