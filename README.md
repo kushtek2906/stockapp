@@ -1,5 +1,22 @@
 # React + TypeScript + Vite
 
+## Export Order History
+
+The order exporter reads the authenticated Supabase order history and creates a CSV that
+opens directly in Excel. It creates one row per perfume line, including order details,
+perfume brand and name, size, quantity in ml, and unit price.
+
+From the project directory, run:
+
+```sh
+npm run export:orders -- --output orders.csv
+```
+
+The command reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from `.env` (or the
+environment), then prompts for the Supabase email and password. Set `SUPABASE_EMAIL` and
+`SUPABASE_PASSWORD` in the environment if prompting is unsuitable. Do not commit those
+credentials or use the Supabase secret key.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

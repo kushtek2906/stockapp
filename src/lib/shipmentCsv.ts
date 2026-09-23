@@ -3,7 +3,6 @@ import { orderChargedTotal } from "./order";
 
 const TAX_PERCENTAGE = 18;
 const CATEGORY = "Beauty";
-const PRODUCT_NAME = "Perfumes";
 const HSN_CODE = "3303";
 const PICKUP_LOCATION = "Scentverse pickup";
 
@@ -63,6 +62,23 @@ function invoiceDate(iso: string): string {
   return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
 }
 
+/** Formats items grouped by size: e.g. "Scentverse decant 3ml (3)\nScentverse decant 5ml (5)" */
+function formatDecantBreakdown(items: Order["items"]): string {
+  if (!items || items.length === 0) return "Perfumes";
+
+  const sizeCounts = new Map<number, number>();
+  for (const item of items) {
+    const size = item.size ?? item.mlSold;
+    sizeCounts.set(size, (sizeCounts.get(size) ?? 0) + 1);
+  }
+
+  // Sort ascending by decant volume (e.g., 3ml, 5ml, 30ml)
+  return Array.from(sizeCounts.entries())
+    .sort(([sizeA], [sizeB]) => sizeA - sizeB)
+    .map(([size, count]) => `Scentverse decant ${size}ml (${count})`)
+    .join(", ");
+}
+
 /** Which required courier fields (city / pincode / phone) are blank on this order. */
 export function missingShippingFields(order: Order): string[] {
   const missing: string[] = [];
@@ -88,6 +104,9 @@ export function buildShipmentCsv(orders: Order[], boxes: BoxType[]): string {
     const cod = payment === "COD" ? finalAmount : 0;
     const weight = order.weightG ?? box?.weightG ?? "";
 
+    const productName = formatDecantBreakdown(order.items);
+    const totalQuantity = order.items.length;
+
     const cells = [
       num, // order_number
       order.customerName ?? "", // customer_name
@@ -111,8 +130,8 @@ export function buildShipmentCsv(orders: Order[], boxes: BoxType[]): string {
       cod, // cod_amount
       payment, // payment_mode
       CATEGORY, // category_of_goods
-      PRODUCT_NAME, // product_name
-      order.items.length, // quantity (decant count)
+      productName, // product_name (e.g. "Scentverse decant 3ml (3)\n...")
+      totalQuantity, // quantity (total sum of all decants)
       HSN_CODE, // hsn_code
       PICKUP_LOCATION, // pickup_location_name
       PICKUP_LOCATION, // return_location_name

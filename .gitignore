@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+orders*.csv
 
 # Local env files (secrets) — keep .env.example tracked
 .env
