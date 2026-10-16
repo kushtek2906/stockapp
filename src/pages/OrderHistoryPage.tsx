@@ -18,7 +18,11 @@ import { Button } from "../components/ui/Button";
 import type { EditOrderInput } from "../hooks/useInventory";
 import { loadPrefs } from "../lib/prefs";
 import { orderChargedTotal } from "../lib/order";
-import { buildShipmentCsv, missingShippingFields } from "../lib/shipmentCsv";
+import {
+  buildShipmentCsv,
+  missingShippingFields,
+  type ShipmentCsvFormat,
+} from "../lib/shipmentCsv";
 import { cn, formatCurrency, formatDateTime } from "../lib/utils";
 import type { Brand, Order, OrderLineRecord, Perfume } from "../types";
 
@@ -46,6 +50,7 @@ export function OrderHistoryPage({
   const [editTarget, setEditTarget] = useState<Order | null>(null);
   const [preview, setPreview] = useState<PerfumePreviewTarget | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [exportFormat, setExportFormat] = useState<ShipmentCsvFormat>("bulk-forward-shipment");
   const [boxSettingsOpen, setBoxSettingsOpen] = useState(false);
   const [boxes, setBoxes] = useState(() => loadPrefs().boxes);
 
@@ -103,23 +108,28 @@ export function OrderHistoryPage({
       toast.error("Select at least one order first.");
       return;
     }
-    const incomplete = chosen.filter((o) => missingShippingFields(o).length > 0);
+    const incomplete = chosen.filter(
+      (o) => missingShippingFields(o, exportFormat, boxes).length > 0,
+    );
     if (incomplete.length > 0) {
       toast.warning(
-        `${incomplete.length} selected order(s) are missing city/pincode/phone — those cells will be blank. Edit the order to fill them.`,
+        `${incomplete.length} selected order(s) are missing required ${exportFormat === "bulk-forward-shipment" ? "city/pincode/phone" : "customer, address, or parcel details"} — those cells will be blank. Edit the order or box settings to fill them.`,
       );
     }
-    const csv = buildShipmentCsv(chosen, boxes);
+    const csv = buildShipmentCsv(chosen, boxes, exportFormat);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `pickups_${new Date().toISOString().slice(0, 10)}.csv`;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = exportFormat === "bulk-forward-shipment"
+      ? `swift_${date}.csv`
+      : `shipmozo_${date}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.success(`Pickup CSV generated for ${chosen.length} order(s).`);
+    toast.success(`CSV generated for ${chosen.length} order(s).`);
   };
 
   return (
@@ -132,6 +142,18 @@ export function OrderHistoryPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <label className="sr-only" htmlFor="shipment-csv-format">
+            Courier CSV format
+          </label>
+          <select
+            id="shipment-csv-format"
+            value={exportFormat}
+            onChange={(event) => setExportFormat(event.target.value as ShipmentCsvFormat)}
+            className="h-9 rounded-md border border-stone-200 bg-white px-2 text-sm text-stone-700 outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-100"
+          >
+            <option value="bulk-forward-shipment">Swift</option>
+            <option value="forward-bulk-order">Shipmozo</option>
+          </select>
           <Button
             variant="outline"
             size="sm"
@@ -146,7 +168,7 @@ export function OrderHistoryPage({
             disabled={selected.size === 0}
           >
             <Download className="size-3.5" aria-hidden />
-            Generate pickup CSV ({selected.size})
+            Generate CSV ({selected.size})
           </Button>
         </div>
       </div>
@@ -163,7 +185,7 @@ export function OrderHistoryPage({
           {sorted.map((order) => {
             const isOpen = expanded === order.id;
             const isConfirming = confirmDeleteId === order.id;
-            const missing = missingShippingFields(order);
+            const missing = missingShippingFields(order, exportFormat, boxes);
             return (
               <div key={order.id} className="rounded-xl border border-stone-200 bg-white p-3">
                 <div className="flex items-start gap-2">
@@ -316,6 +338,7 @@ export function OrderHistoryPage({
               {sorted.map((order) => {
                 const isOpen = expanded === order.id;
                 const isConfirming = confirmDeleteId === order.id;
+                const missing = missingShippingFields(order, exportFormat, boxes);
                 return (
                   <Fragment key={order.id}>
                     <tr className="border-b border-stone-100 last:border-0">
@@ -351,13 +374,13 @@ export function OrderHistoryPage({
                         {order.customerPhone !== "" && (
                           <p className="text-xs text-stone-400">{order.customerPhone}</p>
                         )}
-                        {missingShippingFields(order).length > 0 && (
+                        {missing.length > 0 && (
                           <span
                             className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-600"
-                            title={`Missing for pickup: ${missingShippingFields(order).join(", ")}`}
+                            title={`Missing for selected CSV: ${missing.join(", ")}`}
                           >
                             <TriangleAlert className="size-3" aria-hidden />
-                            needs {missingShippingFields(order).join(", ")}
+                            needs {missing.join(", ")}
                           </span>
                         )}
                       </td>

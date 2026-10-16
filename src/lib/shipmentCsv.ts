@@ -1,13 +1,16 @@
 import type { BoxType, Order } from "../types";
 import { orderChargedTotal } from "./order";
 
+export type ShipmentCsvFormat = "bulk-forward-shipment" | "forward-bulk-order";
+
 const TAX_PERCENTAGE = 18;
 const CATEGORY = "Beauty";
 const HSN_CODE = "3303";
 const PICKUP_LOCATION = "Scentverse pickup";
+const SHIPMOZO_PICKUP_LOCATION_ID = "153711";
 
 /** Exact column order required by the courier's Bulk_forward_shipment template. */
-const HEADER = [
+const BULK_FORWARD_SHIPMENT_HEADER = [
   "order_number",
   "customer_name",
   "city",
@@ -40,6 +43,44 @@ const HEADER = [
   "service",
   "utm_campaign",
   "utm_source",
+];
+
+/** Exact column order supplied for the Forward Bulk Order template. */
+const FORWARD_BULK_ORDER_HEADER = [
+  "*Reference Id",
+  "Order Date as dd/mm/yyyy (Default Today Date)",
+  "company Name",
+  "*Payment Method(COD/Prepaid)",
+  "*Customer Name",
+  "Email",
+  "*Customer Mobile",
+  "Customer Alternate Mobile",
+  "*Shipping Address Line 1",
+  "Shipping Address Line 2",
+  "*Shipping Address Postcode",
+  "Billing Address Line 1",
+  "Billing Address Line 2",
+  "Billing Name",
+  "Billing Email",
+  "Billing Phone Number",
+  "Billing Alt Phone Number",
+  "Billing Address Postcode",
+  "*Product Name",
+  "Sku Number",
+  "*Product Quantity",
+  "*Unit Price per item",
+  "Hsn Code",
+  "Discount",
+  "Product category",
+  "*Length",
+  "*Breadth",
+  "*Height",
+  "*Weight Of Shipment(kg)",
+  "E-way bill",
+  "GST Number",
+  "Added by User Email",
+  "COD Amount",
+  "Pickup Location Id",
 ];
 
 function pad(n: number, width: number): string {
@@ -79,12 +120,30 @@ function formatDecantBreakdown(items: Order["items"]): string {
     .join(", ");
 }
 
-/** Which required courier fields (city / pincode / phone) are blank on this order. */
-export function missingShippingFields(order: Order): string[] {
+/** Required shipping fields that are absent for the selected courier template. */
+export function missingShippingFields(
+  order: Order,
+  format: ShipmentCsvFormat = "bulk-forward-shipment",
+  boxes: BoxType[] = [],
+): string[] {
   const missing: string[] = [];
-  if ((order.customerCity ?? "").trim() === "") missing.push("city");
-  if ((order.customerPincode ?? "").trim() === "") missing.push("pincode");
-  if ((order.customerPhone ?? "").trim() === "") missing.push("phone");
+  if (format === "bulk-forward-shipment") {
+    if ((order.customerCity ?? "").trim() === "") missing.push("city");
+    if ((order.customerPincode ?? "").trim() === "") missing.push("pincode");
+    if ((order.customerPhone ?? "").trim() === "") missing.push("phone");
+    return missing;
+  }
+
+  const box = boxes.find((candidate) => candidate.id === order.boxId) ?? boxes[0];
+  if (order.customerName.trim() === "") missing.push("customer name");
+  if ((order.customerPhone ?? "").trim() === "") missing.push("mobile");
+  if (order.customerAddress.trim() === "") missing.push("shipping address");
+  if ((order.customerPincode ?? "").trim() === "") missing.push("postcode");
+  if (order.items.length === 0) missing.push("product");
+  if (box === undefined || box.lengthCm <= 0) missing.push("length");
+  if (box === undefined || box.widthCm <= 0) missing.push("breadth");
+  if (box === undefined || box.heightCm <= 0) missing.push("height");
+  if ((order.weightG ?? box?.weightG ?? 0) <= 0) missing.push("shipment weight");
   return missing;
 }
 
@@ -93,8 +152,8 @@ function esc(value: string | number): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Build the full CSV text (header + one row per order) for the selected orders. */
-export function buildShipmentCsv(orders: Order[], boxes: BoxType[]): string {
+/** Build the existing Bulk_forward_shipment CSV, preserving its original mapping. */
+function buildBulkForwardShipmentCsv(orders: Order[], boxes: BoxType[]): string {
   const rows = orders.map((order) => {
     const box =
       boxes.find((b) => b.id === order.boxId) ?? boxes[0] ?? null;
@@ -144,5 +203,71 @@ export function buildShipmentCsv(orders: Order[], boxes: BoxType[]): string {
     return cells.map(esc).join(",");
   });
 
-  return [HEADER.join(","), ...rows].join("\n");
+  return [BULK_FORWARD_SHIPMENT_HEADER.join(","), ...rows].join("\n");
+}
+
+/** Build one bundled product row per order for the Forward Bulk Order template. */
+function buildForwardBulkOrderCsv(orders: Order[], boxes: BoxType[]): string {
+  const rows = orders.map((order) => {
+    const box = boxes.find((candidate) => candidate.id === order.boxId) ?? boxes[0] ?? null;
+    const num = shipmentNumber(order);
+    const finalAmount = orderChargedTotal(order);
+    const payment = order.paymentMode ?? "Prepaid";
+    const weightG = order.weightG ?? box?.weightG ?? "";
+    const weightKg = typeof weightG === "number" ? weightG / 1000 : "";
+
+    const cells = [
+      num, // *Reference Id
+      "", // Order Date (left blank per export preference)
+      "Decantverse", // company Name
+      payment, // *Payment Method
+      order.customerName ?? "", // *Customer Name
+      order.customerEmail ?? "", // Email
+      order.customerPhone ?? "", // *Customer Mobile
+      order.customerAltPhone ?? "", // Customer Alternate Mobile
+      order.customerAddress ?? "", // *Shipping Address Line 1
+      "", // Shipping Address Line 2
+      order.customerPincode ?? "", // *Shipping Address Postcode
+      order.customerAddress ?? "", // Billing Address Line 1 (same as shipping)
+      "", // Billing Address Line 2
+      order.customerName ?? "", // Billing Name
+      order.customerEmail ?? "", // Billing Email
+      order.customerPhone ?? "", // Billing Phone Number
+      order.customerAltPhone ?? "", // Billing Alt Phone Number
+      order.customerPincode ?? "", // Billing Address Postcode
+      formatDecantBreakdown(order.items), // *Product Name
+      "", // Sku Number
+      1, // *Product Quantity (one mixed decant bundle per shipment)
+      finalAmount, // *Unit Price per item (final charged amount for the bundle)
+      HSN_CODE, // Hsn Code
+      "", // Discount (already reflected in the final charged amount)
+      CATEGORY, // Product category
+      box?.lengthCm ?? "", // *Length
+      box?.widthCm ?? "", // *Breadth
+      box?.heightCm ?? "", // *Height
+      weightKg, // *Weight Of Shipment (kg; app stores grams)
+      "", // E-way bill
+      "", // GST Number
+      "", // Added by User Email
+      payment === "COD" ? finalAmount : "", // COD Amount (blank for prepaid)
+      SHIPMOZO_PICKUP_LOCATION_ID, // Pickup Location Id
+    ];
+    return cells.map(esc).join(",");
+  });
+
+  return [FORWARD_BULK_ORDER_HEADER.join(","), ...rows].join("\n");
+}
+
+/** Select a courier-specific CSV schema for the selected orders. */
+export function buildShipmentCsv(
+  orders: Order[],
+  boxes: BoxType[],
+  format: ShipmentCsvFormat,
+): string {
+  switch (format) {
+    case "bulk-forward-shipment":
+      return buildBulkForwardShipmentCsv(orders, boxes);
+    case "forward-bulk-order":
+      return buildForwardBulkOrderCsv(orders, boxes);
+  }
 }
